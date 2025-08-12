@@ -59,4 +59,23 @@ public interface IVisualStudioService
     /// </summary>
     /// <param name="processId">The process ID of the Visual Studio instance to disconnect from.</param>
     Task DisconnectFromInstanceAsync(int processId);
+
+    /// <summary>
+    /// Gets available output window panes.
+    /// </summary>
+    /// <returns>Array of output pane names.</returns>
+    Task<string[]> GetOutputPanesAsync();
+
+    /// <summary>
+    /// Gets content from a specific output window pane.
+    /// </summary>
+    /// <param name="paneName">The name of the output pane (e.g., "Build", "Debug", "General").</param>
+    /// <returns>The current content of the output pane.</returns>
+    Task<string> GetOutputPaneContentAsync(string paneName);
+
+    /// <summary>
+    /// Clears content from a specific output window pane.
+    /// </summary>
+    /// <param name="paneName">The name of the output pane to clear.</param>
+    Task ClearOutputPaneAsync(string paneName);
 }

@@ -13,6 +13,7 @@ namespace VisualStudioMcp.Core;
 public class VisualStudioService : IVisualStudioService
 {
     private readonly ILogger<VisualStudioService> _logger;
+    private readonly Dictionary<int, DTE> _connectedInstances = new();
 
     // COM interop declarations
     [DllImport("ole32.dll")]
@@ -224,6 +225,9 @@ public class VisualStudioService : IVisualStudioService
                         rot.GetObject(moniker, out var obj);
                         if (obj is DTE dte)
                         {
+                            // Store the connected instance for future use
+                            _connectedInstances[processId] = dte;
+                            
                             return ComInteropHelper.WithComObject(
                                 () => dte,
                                 dteInstance => CreateVisualStudioInstance(dteInstance, processId),
@@ -242,40 +246,218 @@ public class VisualStudioService : IVisualStudioService
     {
         _logger.LogInformation("Opening solution: {SolutionPath}", solutionPath);
         
-        // TODO: Implement solution opening via COM
-        await Task.Delay(10); // Placeholder
+        if (string.IsNullOrWhiteSpace(solutionPath))
+            throw new ArgumentException("Solution path cannot be null or empty", nameof(solutionPath));
         
-        throw new NotImplementedException("COM interop not yet implemented");
+        if (!File.Exists(solutionPath))
+            throw new FileNotFoundException($"Solution file not found: {solutionPath}");
+
+        return await Task.Run(() =>
+        {
+            // Get the first available connected instance, or throw if none available
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            return ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    // Open the solution
+                    dte.Solution.Open(solutionPath);
+                    
+                    // Wait for solution to fully load
+                    while (!dte.Solution.IsOpen)
+                    {
+                        System.Threading.Thread.Sleep(100);
+                    }
+                    
+                    return CreateSolutionInfo(dte);
+                },
+                _logger,
+                "OpenSolution");
+        }).ConfigureAwait(false);
     }
 
     public async Task<BuildResult> BuildSolutionAsync(string configuration = "Debug")
     {
         _logger.LogInformation("Building solution with configuration: {Configuration}", configuration);
         
-        // TODO: Implement solution building via COM
-        await Task.Delay(10); // Placeholder
-        
-        throw new NotImplementedException("COM interop not yet implemented");
+        if (string.IsNullOrWhiteSpace(configuration))
+            throw new ArgumentException("Configuration cannot be null or empty", nameof(configuration));
+
+        return await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            return ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    if (!dte.Solution.IsOpen)
+                    {
+                        throw new InvalidOperationException("No solution is currently open. Open a solution first.");
+                    }
+
+                    var startTime = DateTime.UtcNow;
+                    var buildResult = new BuildResult
+                    {
+                        Configuration = configuration
+                    };
+
+                    try
+                    {
+                        // Set the solution configuration
+                        var solutionBuild = dte.Solution.SolutionBuild;
+                        
+                        // Find the matching configuration
+                        var foundConfig = false;
+                        foreach (SolutionConfiguration config in solutionBuild.SolutionConfigurations)
+                        {
+                            if (config.Name.Equals(configuration, StringComparison.OrdinalIgnoreCase))
+                            {
+                                solutionBuild.ActiveConfiguration = config;
+                                foundConfig = true;
+                                break;
+                            }
+                        }
+
+                        if (!foundConfig)
+                        {
+                            _logger.LogWarning("Configuration '{Configuration}' not found, using current active configuration", configuration);
+                        }
+
+                        // Clear error list before building
+                        dte.ExecuteCommand("Build.ClearErrorList");
+
+                        // Start the build
+                        solutionBuild.Build(true); // true = wait for completion
+
+                        // Calculate duration
+                        buildResult.Duration = DateTime.UtcNow - startTime;
+
+                        // Check build result
+                        buildResult.Success = solutionBuild.LastBuildInfo == 0; // 0 = success
+
+                        // Capture build output and errors
+                        CaptureBuildOutput(dte, buildResult);
+
+                        _logger.LogInformation("Build completed. Success: {Success}, Errors: {ErrorCount}, Warnings: {WarningCount}", 
+                            buildResult.Success, buildResult.ErrorCount, buildResult.WarningCount);
+
+                        return buildResult;
+                    }
+                    catch (Exception ex)
+                    {
+                        buildResult.Success = false;
+                        buildResult.Duration = DateTime.UtcNow - startTime;
+                        buildResult.Output = $"Build failed with exception: {ex.Message}";
+                        
+                        _logger.LogError(ex, "Build operation failed");
+                        return buildResult;
+                    }
+                },
+                _logger,
+                "BuildSolution");
+        }).ConfigureAwait(false);
     }
 
     public async Task<ProjectInfo[]> GetProjectsAsync()
     {
         _logger.LogInformation("Getting projects from current solution...");
         
-        // TODO: Implement project enumeration via COM
-        await Task.Delay(10); // Placeholder
-        
-        return Array.Empty<ProjectInfo>();
+        return await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            return ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    if (!dte.Solution.IsOpen)
+                    {
+                        _logger.LogWarning("No solution is currently open");
+                        return Array.Empty<ProjectInfo>();
+                    }
+                    
+                    var projects = new List<ProjectInfo>();
+                    
+                    foreach (EnvDTE.Project project in dte.Solution.Projects)
+                    {
+                        if (project != null)
+                        {
+                            try
+                            {
+                                var projectInfo = CreateProjectInfo(project);
+                                if (projectInfo != null)
+                                {
+                                    projects.Add(projectInfo);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to process project: {ProjectName}", 
+                                    project.Name ?? "Unknown");
+                            }
+                        }
+                    }
+                    
+                    _logger.LogInformation("Found {Count} projects in solution", projects.Count);
+                    return projects.ToArray();
+                },
+                _logger,
+                "GetProjects");
+        }).ConfigureAwait(false);
     }
 
     public async Task ExecuteCommandAsync(string commandName, string args = "")
     {
         _logger.LogInformation("Executing VS command: {CommandName} with args: {Args}", commandName, args);
         
-        // TODO: Implement command execution via COM
-        await Task.Delay(10); // Placeholder
-        
-        throw new NotImplementedException("COM interop not yet implemented");
+        if (string.IsNullOrWhiteSpace(commandName))
+            throw new ArgumentException("Command name cannot be null or empty", nameof(commandName));
+
+        await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    try
+                    {
+                        if (string.IsNullOrEmpty(args))
+                        {
+                            dte.ExecuteCommand(commandName);
+                        }
+                        else
+                        {
+                            dte.ExecuteCommand(commandName, args);
+                        }
+                        
+                        _logger.LogDebug("Command executed successfully: {CommandName}", commandName);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to execute command: {CommandName}", commandName);
+                        throw new InvalidOperationException($"Failed to execute command '{commandName}': {ex.Message}", ex);
+                    }
+                },
+                _logger,
+                "ExecuteCommand");
+        }).ConfigureAwait(false);
     }
 
     public async Task<bool> IsConnectionHealthyAsync(int processId)
@@ -330,9 +512,20 @@ public class VisualStudioService : IVisualStudioService
         {
             try
             {
-                // In COM interop, disconnection is mainly about releasing references
-                // The actual cleanup happens when COM objects are released
-                _logger.LogDebug("Connection cleanup completed for process {ProcessId}", processId);
+                if (_connectedInstances.TryGetValue(processId, out var dte))
+                {
+                    // Remove from connected instances
+                    _connectedInstances.Remove(processId);
+                    
+                    // Release the COM object
+                    ComInteropHelper.SafeReleaseComObject(dte, _logger, "DTE");
+                    
+                    _logger.LogDebug("Successfully disconnected from Visual Studio instance with PID: {ProcessId}", processId);
+                }
+                else
+                {
+                    _logger.LogDebug("Visual Studio instance with PID {ProcessId} was not connected", processId);
+                }
             }
             catch (Exception ex)
             {
@@ -506,6 +699,230 @@ public class VisualStudioService : IVisualStudioService
         {
             _logger.LogWarning(ex, "Error creating VisualStudioInstance for process {ProcessId}", processId);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Captures build output and errors from the Visual Studio error list and output window.
+    /// </summary>
+    private void CaptureBuildOutput(DTE dte, BuildResult buildResult)
+    {
+        try
+        {
+            var output = new System.Text.StringBuilder();
+            var errors = new List<BuildError>();
+            var warnings = new List<BuildWarning>();
+
+            // Get output from Build output pane
+            try
+            {
+                var outputWindow = dte.ToolWindows.OutputWindow;
+                var buildPane = outputWindow.OutputWindowPanes.Item("Build");
+                if (buildPane != null)
+                {
+                    var textDocument = buildPane.TextDocument;
+                    if (textDocument != null)
+                    {
+                        var editPoint = textDocument.StartPoint.CreateEditPoint();
+                        var buildOutput = editPoint.GetText(textDocument.EndPoint);
+                        output.AppendLine(buildOutput);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not capture build output from output window");
+                output.AppendLine("Build output not available");
+            }
+
+            // Get errors and warnings from Error List
+            try
+            {
+                var errorList = dte.ToolWindows.ErrorList;
+                if (errorList != null)
+                {
+                    for (int i = 1; i <= errorList.ErrorItems.Count; i++)
+                    {
+                        var errorItem = errorList.ErrorItems.Item(i);
+                        if (errorItem != null)
+                        {
+                            if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                            {
+                                errors.Add(new BuildError
+                                {
+                                    File = errorItem.FileName ?? string.Empty,
+                                    Line = errorItem.Line,
+                                    Column = errorItem.Column,
+                                    Code = errorItem.ErrorLevel.ToString(),
+                                    Message = errorItem.Description ?? string.Empty,
+                                    Project = errorItem.Project ?? string.Empty
+                                });
+                            }
+                            else if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium)
+                            {
+                                warnings.Add(new BuildWarning
+                                {
+                                    File = errorItem.FileName ?? string.Empty,
+                                    Line = errorItem.Line,
+                                    Column = errorItem.Column,
+                                    Code = errorItem.ErrorLevel.ToString(),
+                                    Message = errorItem.Description ?? string.Empty,
+                                    Project = errorItem.Project ?? string.Empty
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not capture errors from error list");
+            }
+
+            buildResult.Output = output.ToString();
+            buildResult.Errors = errors.ToArray();
+            buildResult.Warnings = warnings.ToArray();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing build output");
+            buildResult.Output = "Error capturing build output";
+        }
+    }
+
+    /// <summary>
+    /// Creates a SolutionInfo object from a DTE solution.
+    /// </summary>
+    private SolutionInfo CreateSolutionInfo(DTE dte)
+    {
+        try
+        {
+            var solution = dte.Solution;
+            var solutionInfo = new SolutionInfo
+            {
+                FullPath = solution.FullName ?? string.Empty,
+                Name = Path.GetFileNameWithoutExtension(solution.FullName) ?? "Unknown",
+                IsOpen = solution.IsOpen
+            };
+
+            var projects = new List<ProjectInfo>();
+            foreach (EnvDTE.Project project in solution.Projects)
+            {
+                if (project != null)
+                {
+                    try
+                    {
+                        var projectInfo = CreateProjectInfo(project);
+                        if (projectInfo != null)
+                        {
+                            projects.Add(projectInfo);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to process project: {ProjectName}", 
+                            project.Name ?? "Unknown");
+                    }
+                }
+            }
+
+            solutionInfo.Projects = projects.ToArray();
+            return solutionInfo;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating SolutionInfo");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Creates a ProjectInfo object from a DTE project.
+    /// </summary>
+    private ProjectInfo? CreateProjectInfo(EnvDTE.Project project)
+    {
+        try
+        {
+            var projectInfo = new ProjectInfo
+            {
+                FullPath = project.FullName ?? string.Empty,
+                Name = project.Name ?? "Unknown",
+                IsLoaded = true
+            };
+
+            // Get project type from Kind
+            try
+            {
+                projectInfo.ProjectType = GetProjectTypeFromKind(project.Kind);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not determine project type for {ProjectName}", project.Name);
+                projectInfo.ProjectType = "Unknown";
+            }
+
+            // Get target frameworks (this is more complex and may require accessing project properties)
+            try
+            {
+                var targetFramework = GetProjectTargetFramework(project);
+                if (!string.IsNullOrEmpty(targetFramework))
+                {
+                    projectInfo.TargetFrameworks = new[] { targetFramework };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not determine target framework for {ProjectName}", project.Name);
+            }
+
+            return projectInfo;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating ProjectInfo for project: {ProjectName}", 
+                project?.Name ?? "Unknown");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets a human-readable project type from the project kind GUID.
+    /// </summary>
+    private string GetProjectTypeFromKind(string kind)
+    {
+        return kind?.ToUpperInvariant() switch
+        {
+            "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}" => "C#",
+            "{F184B08F-C81C-45F6-A57F-5ABD9991F28F}" => "VB.NET",
+            "{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}" => "C++",
+            "{A9ACE9BB-CECE-4E62-9AA4-C7E7C5BD2124}" => "Database",
+            "{54435603-DBB4-11D2-8724-00A0C9A8B90C}" => "Setup",
+            "{2150E333-8FDC-42A3-9474-1A3956D46DE8}" => "Solution Folder",
+            _ => "Unknown"
+        };
+    }
+
+    /// <summary>
+    /// Gets the target framework for a project.
+    /// </summary>
+    private string GetProjectTargetFramework(EnvDTE.Project project)
+    {
+        try
+        {
+            // Try to get TargetFramework property
+            foreach (EnvDTE.Property prop in project.Properties)
+            {
+                if (prop.Name == "TargetFramework" || prop.Name == "TargetFrameworkMoniker")
+                {
+                    return prop.Value?.ToString() ?? string.Empty;
+                }
+            }
+            
+            return string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 }
