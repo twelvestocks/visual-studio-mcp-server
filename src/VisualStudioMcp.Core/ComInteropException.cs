@@ -35,7 +35,7 @@ public class ComInteropException : Exception
     /// <summary>
     /// Gets the HRESULT from the inner COM exception, if available.
     /// </summary>
-    public int? HResult => InnerException?.HResult;
+    public new int? HResult => InnerException?.HResult;
 
     /// <summary>
     /// Gets whether this exception represents a retry-able COM error.

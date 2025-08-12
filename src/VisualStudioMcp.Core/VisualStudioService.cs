@@ -21,11 +21,19 @@ public class VisualStudioService : IVisualStudioService
     [DllImport("ole32.dll")]
     private static extern int CreateBindCtx(int reserved, out IBindCtx ppbc);
 
+    /// <summary>
+    /// Initializes a new instance of the VisualStudioService class.
+    /// </summary>
+    /// <param name="logger">The logger instance for diagnostics.</param>
     public VisualStudioService(ILogger<VisualStudioService> logger)
     {
         _logger = logger;
     }
 
+    /// <summary>
+    /// Gets all currently running Visual Studio instances.
+    /// </summary>
+    /// <returns>An array of VisualStudioInstance objects representing running instances.</returns>
     public async Task<VisualStudioInstance[]> GetRunningInstancesAsync()
     {
         _logger.LogInformation("Getting running Visual Studio instances...");
@@ -44,7 +52,7 @@ public class VisualStudioService : IVisualStudioService
                 rot => EnumerateVisualStudioInstances(rot),
                 _logger,
                 "GetRunningVisualStudioInstances");
-        });
+        }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -157,7 +165,7 @@ public class VisualStudioService : IVisualStudioService
                 rot => FindAndConnectToInstance(rot, processId),
                 _logger,
                 "ConnectToVisualStudioInstance");
-        });
+        }).ConfigureAwait(false);
     }
 
     private VisualStudioInstance FindAndConnectToInstance(IRunningObjectTable rot, int processId)
@@ -311,7 +319,7 @@ public class VisualStudioService : IVisualStudioService
                 _logger.LogWarning(ex, "Error checking connection health for process {ProcessId}", processId);
                 return false;
             }
-        });
+        }).ConfigureAwait(false);
     }
 
     public async Task DisconnectFromInstanceAsync(int processId)
@@ -330,7 +338,7 @@ public class VisualStudioService : IVisualStudioService
             {
                 _logger.LogWarning(ex, "Error during disconnection from process {ProcessId}", processId);
             }
-        });
+        }).ConfigureAwait(false);
     }
 
     private bool CheckDteConnectionHealth(IRunningObjectTable rot, int processId)

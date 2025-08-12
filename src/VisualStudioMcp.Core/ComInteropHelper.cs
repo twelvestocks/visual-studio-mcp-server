@@ -27,9 +27,10 @@ public static class ComInteropHelper
         }
         catch (COMException comEx)
         {
-            logger.LogError(comEx, "COM exception in operation {OperationName}: HRESULT={HResult:X}, Message={Message}",
-                operationName, comEx.HResult, comEx.Message);
-            throw new ComInteropException($"COM operation '{operationName}' failed: {comEx.Message}", comEx);
+            var friendlyMessage = GetComErrorDescription(comEx.HResult);
+            logger.LogError(comEx, "COM exception in operation {OperationName}: HRESULT={HResult:X}, Description={Description}, Message={Message}",
+                operationName, comEx.HResult, friendlyMessage, comEx.Message);
+            throw new ComInteropException($"COM operation '{operationName}' failed: {friendlyMessage}", comEx);
         }
         catch (Exception ex)
         {
@@ -55,9 +56,10 @@ public static class ComInteropHelper
         }
         catch (COMException comEx)
         {
-            logger.LogError(comEx, "COM exception in operation {OperationName}: HRESULT={HResult:X}, Message={Message}",
-                operationName, comEx.HResult, comEx.Message);
-            throw new ComInteropException($"COM operation '{operationName}' failed: {comEx.Message}", comEx);
+            var friendlyMessage = GetComErrorDescription(comEx.HResult);
+            logger.LogError(comEx, "COM exception in operation {OperationName}: HRESULT={HResult:X}, Description={Description}, Message={Message}",
+                operationName, comEx.HResult, friendlyMessage, comEx.Message);
+            throw new ComInteropException($"COM operation '{operationName}' failed: {friendlyMessage}", comEx);
         }
         catch (Exception ex)
         {
@@ -115,6 +117,13 @@ public static class ComInteropHelper
         TComObject? comObject = null;
         try
         {
+            // Check memory pressure before expensive COM operations
+            if (MemoryMonitor.IsMemoryPressureHigh(logger, 300))
+            {
+                logger.LogWarning("High memory pressure detected before COM operation {OperationName}, performing cleanup", operationName);
+                MemoryMonitor.PerformMemoryCleanup(logger, forceFullCollection: false);
+            }
+
             comObject = getComObject();
             return SafeComOperation(() => operation(comObject), logger, operationName);
         }
@@ -141,6 +150,13 @@ public static class ComInteropHelper
         TComObject? comObject = null;
         try
         {
+            // Check memory pressure before expensive COM operations
+            if (MemoryMonitor.IsMemoryPressureHigh(logger, 300))
+            {
+                logger.LogWarning("High memory pressure detected before COM operation {OperationName}, performing cleanup", operationName);
+                MemoryMonitor.PerformMemoryCleanup(logger, forceFullCollection: false);
+            }
+
             comObject = getComObject();
             SafeComOperation(() => operation(comObject), logger, operationName);
         }
@@ -163,7 +179,29 @@ public static class ComInteropHelper
             unchecked((int)0x80010001) => true, // RPC_E_CALL_REJECTED
             unchecked((int)0x80010105) => true, // RPC_E_SERVERCALL_RETRYLATER
             unchecked((int)0x8001010A) => true, // RPC_E_SERVERCALL_REJECTED
+            unchecked((int)0x80070005) => true, // E_ACCESSDENIED (sometimes transient)
+            unchecked((int)0x80004005) => true, // E_FAIL (general failure, might be transient)
             _ => false
+        };
+    }
+
+    /// <summary>
+    /// Gets a user-friendly error message for common COM HRESULTs.
+    /// </summary>
+    /// <param name="hresult">The HRESULT to interpret.</param>
+    /// <returns>A user-friendly error message.</returns>
+    public static string GetComErrorDescription(int hresult)
+    {
+        return hresult switch
+        {
+            unchecked((int)0x800401E3) => "Visual Studio instance is temporarily unavailable",
+            unchecked((int)0x80010001) => "Visual Studio rejected the call (may be busy)",
+            unchecked((int)0x80010105) => "Visual Studio server requested retry later",
+            unchecked((int)0x8001010A) => "Visual Studio server call was rejected",
+            unchecked((int)0x80070005) => "Access denied to Visual Studio instance",
+            unchecked((int)0x80004005) => "General COM failure",
+            unchecked((int)0x80040154) => "Visual Studio COM class not registered",
+            _ => $"COM error with HRESULT 0x{hresult:X8}"
         };
     }
 
@@ -199,13 +237,73 @@ public static class ComInteropHelper
 
                 if (attempt <= maxRetries)
                 {
-                    await Task.Delay(retryDelay);
+                    await Task.Delay(retryDelay).ConfigureAwait(false);
                     retryDelay *= 2; // Exponential backoff
                     continue;
                 }
 
                 throw;
             }
+        }
+    }
+
+    /// <summary>
+    /// Executes a COM operation with timeout support.
+    /// </summary>
+    /// <typeparam name="T">The return type of the operation.</typeparam>
+    /// <param name="operation">The COM operation to execute.</param>
+    /// <param name="logger">Logger for diagnostics.</param>
+    /// <param name="operationName">Name of the operation for logging.</param>
+    /// <param name="timeoutMs">Timeout in milliseconds (default: 30 seconds).</param>
+    /// <returns>The result of the operation.</returns>
+    public static async Task<T> SafeComOperationWithTimeoutAsync<T>(
+        Func<T> operation,
+        ILogger logger,
+        string operationName,
+        int timeoutMs = 30000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        
+        try
+        {
+            return await Task.Run(() => SafeComOperation(operation, logger, operationName), cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
+        {
+            logger.LogError("COM operation {OperationName} timed out after {TimeoutMs}ms", operationName, timeoutMs);
+            throw new ComInteropException($"COM operation '{operationName}' timed out after {timeoutMs}ms");
+        }
+    }
+
+    /// <summary>
+    /// Executes a COM operation with automatic COM object cleanup and timeout.
+    /// </summary>
+    /// <typeparam name="TComObject">The type of COM object to manage.</typeparam>
+    /// <typeparam name="TResult">The return type of the operation.</typeparam>
+    /// <param name="getComObject">Function to get the COM object.</param>
+    /// <param name="operation">Operation to perform with the COM object.</param>
+    /// <param name="logger">Logger for diagnostics.</param>
+    /// <param name="operationName">Name of the operation for logging.</param>
+    /// <param name="timeoutMs">Timeout in milliseconds (default: 30 seconds).</param>
+    /// <returns>The result of the operation.</returns>
+    public static async Task<TResult> WithComObjectTimeoutAsync<TComObject, TResult>(
+        Func<TComObject> getComObject,
+        Func<TComObject, TResult> operation,
+        ILogger logger,
+        string operationName,
+        int timeoutMs = 30000) where TComObject : class
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        
+        try
+        {
+            return await Task.Run(() => WithComObject(getComObject, operation, logger, operationName), cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
+        {
+            logger.LogError("COM operation {OperationName} with object {ObjectType} timed out after {TimeoutMs}ms", 
+                operationName, typeof(TComObject).Name, timeoutMs);
+            throw new ComInteropException($"COM operation '{operationName}' with {typeof(TComObject).Name} timed out after {timeoutMs}ms");
         }
     }
 }
