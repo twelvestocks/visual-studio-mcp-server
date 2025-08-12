@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using EnvDTE;
+using EnvDTE80;
 using Microsoft.Extensions.Logging;
 using VisualStudioMcp.Shared.Models;
 
@@ -14,6 +15,8 @@ public class VisualStudioService : IVisualStudioService
 {
     private readonly ILogger<VisualStudioService> _logger;
     private readonly Dictionary<int, DTE> _connectedInstances = new();
+    private readonly Dictionary<int, DateTime> _lastHealthCheck = new();
+    private readonly System.Threading.Timer _healthCheckTimer;
 
     // COM interop declarations
     [DllImport("ole32.dll")]
@@ -29,6 +32,9 @@ public class VisualStudioService : IVisualStudioService
     public VisualStudioService(ILogger<VisualStudioService> logger)
     {
         _logger = logger;
+        
+        // Start health check timer - check every 30 seconds
+        _healthCheckTimer = new System.Threading.Timer(PerformHealthChecks, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
 
     /// <summary>
@@ -320,7 +326,7 @@ public class VisualStudioService : IVisualStudioService
                         {
                             if (config.Name.Equals(configuration, StringComparison.OrdinalIgnoreCase))
                             {
-                                solutionBuild.ActiveConfiguration = config;
+                                config.Activate();
                                 foundConfig = true;
                                 break;
                             }
@@ -534,6 +540,159 @@ public class VisualStudioService : IVisualStudioService
         }).ConfigureAwait(false);
     }
 
+    public async Task<string[]> GetOutputPanesAsync()
+    {
+        _logger.LogInformation("Getting available output window panes...");
+        
+        return await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            return ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    var paneNames = new List<string>();
+                    
+                    try
+                    {
+                        if (!(dte is DTE2 dte2))
+                        {
+                            _logger.LogError("DTE object is not DTE2, cannot access ToolWindows");
+                            return new[] { "Build", "Debug", "General" };
+                        }
+                        
+                        var outputWindow = dte2.ToolWindows.OutputWindow;
+                        foreach (OutputWindowPane pane in outputWindow.OutputWindowPanes)
+                        {
+                            if (pane != null && !string.IsNullOrEmpty(pane.Name))
+                            {
+                                paneNames.Add(pane.Name);
+                            }
+                        }
+                        
+                        _logger.LogDebug("Found {Count} output panes", paneNames.Count);
+                        return paneNames.ToArray();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error enumerating output panes");
+                        return new[] { "Build", "Debug", "General" }; // Default panes
+                    }
+                },
+                _logger,
+                "GetOutputPanes");
+        }).ConfigureAwait(false);
+    }
+
+    public async Task<string> GetOutputPaneContentAsync(string paneName)
+    {
+        _logger.LogInformation("Getting content from output pane: {PaneName}", paneName);
+        
+        if (string.IsNullOrWhiteSpace(paneName))
+            throw new ArgumentException("Pane name cannot be null or empty", nameof(paneName));
+
+        return await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            return ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    try
+                    {
+                        if (!(dte is DTE2 dte2))
+                        {
+                            _logger.LogError("DTE object is not DTE2, cannot access ToolWindows");
+                            return string.Empty;
+                        }
+                        
+                        var outputWindow = dte2.ToolWindows.OutputWindow;
+                        var pane = outputWindow.OutputWindowPanes.Item(paneName);
+                        
+                        if (pane?.TextDocument != null)
+                        {
+                            var editPoint = pane.TextDocument.StartPoint.CreateEditPoint();
+                            var content = editPoint.GetText(pane.TextDocument.EndPoint);
+                            
+                            _logger.LogDebug("Retrieved {Length} characters from pane {PaneName}", 
+                                content.Length, paneName);
+                            return content;
+                        }
+                        
+                        _logger.LogWarning("Output pane '{PaneName}' not found or has no content", paneName);
+                        return string.Empty;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error getting content from output pane: {PaneName}", paneName);
+                        return $"Error accessing pane '{paneName}': {ex.Message}";
+                    }
+                },
+                _logger,
+                "GetOutputPaneContent");
+        }).ConfigureAwait(false);
+    }
+
+    public async Task ClearOutputPaneAsync(string paneName)
+    {
+        _logger.LogInformation("Clearing output pane: {PaneName}", paneName);
+        
+        if (string.IsNullOrWhiteSpace(paneName))
+            throw new ArgumentException("Pane name cannot be null or empty", nameof(paneName));
+
+        await Task.Run(() =>
+        {
+            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            if (connectedInstance == null)
+            {
+                throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
+            }
+
+            ComInteropHelper.WithComObject(
+                () => connectedInstance,
+                dte => {
+                    try
+                    {
+                        if (!(dte is DTE2 dte2))
+                        {
+                            _logger.LogError("DTE object is not DTE2, cannot access ToolWindows");
+                            return true;
+                        }
+                        
+                        var outputWindow = dte2.ToolWindows.OutputWindow;
+                        var pane = outputWindow.OutputWindowPanes.Item(paneName);
+                        
+                        if (pane != null)
+                        {
+                            pane.Clear();
+                            _logger.LogDebug("Successfully cleared output pane: {PaneName}", paneName);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Output pane '{PaneName}' not found", paneName);
+                        }
+                        
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error clearing output pane: {PaneName}", paneName);
+                        throw new InvalidOperationException($"Failed to clear pane '{paneName}': {ex.Message}", ex);
+                    }
+                },
+                _logger,
+                "ClearOutputPane");
+        }).ConfigureAwait(false);
+    }
+
     private bool CheckDteConnectionHealth(IRunningObjectTable rot, int processId)
     {
         return ComInteropHelper.WithComObject(
@@ -716,16 +875,24 @@ public class VisualStudioService : IVisualStudioService
             // Get output from Build output pane
             try
             {
-                var outputWindow = dte.ToolWindows.OutputWindow;
-                var buildPane = outputWindow.OutputWindowPanes.Item("Build");
-                if (buildPane != null)
+                if (!(dte is DTE2 dte2))
                 {
-                    var textDocument = buildPane.TextDocument;
-                    if (textDocument != null)
+                    _logger.LogDebug("DTE object is not DTE2, cannot access output window");
+                    output.AppendLine("Build output not available - DTE2 required");
+                }
+                else
+                {
+                    var outputWindow = dte2.ToolWindows.OutputWindow;
+                    var buildPane = outputWindow.OutputWindowPanes.Item("Build");
+                    if (buildPane != null)
                     {
-                        var editPoint = textDocument.StartPoint.CreateEditPoint();
-                        var buildOutput = editPoint.GetText(textDocument.EndPoint);
-                        output.AppendLine(buildOutput);
+                        var textDocument = buildPane.TextDocument;
+                        if (textDocument != null)
+                        {
+                            var editPoint = textDocument.StartPoint.CreateEditPoint();
+                            var buildOutput = editPoint.GetText(textDocument.EndPoint);
+                            output.AppendLine(buildOutput);
+                        }
                     }
                 }
             }
@@ -738,37 +905,44 @@ public class VisualStudioService : IVisualStudioService
             // Get errors and warnings from Error List
             try
             {
-                var errorList = dte.ToolWindows.ErrorList;
-                if (errorList != null)
+                if (!(dte is DTE2 dte2))
                 {
-                    for (int i = 1; i <= errorList.ErrorItems.Count; i++)
+                    _logger.LogDebug("DTE object is not DTE2, cannot access error list");
+                }
+                else
+                {
+                    var errorList = dte2.ToolWindows.ErrorList;
+                    if (errorList != null)
                     {
-                        var errorItem = errorList.ErrorItems.Item(i);
-                        if (errorItem != null)
+                        for (int i = 1; i <= errorList.ErrorItems.Count; i++)
                         {
-                            if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                            var errorItem = errorList.ErrorItems.Item(i);
+                            if (errorItem != null)
                             {
-                                errors.Add(new BuildError
+                                if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
                                 {
-                                    File = errorItem.FileName ?? string.Empty,
-                                    Line = errorItem.Line,
-                                    Column = errorItem.Column,
-                                    Code = errorItem.ErrorLevel.ToString(),
-                                    Message = errorItem.Description ?? string.Empty,
-                                    Project = errorItem.Project ?? string.Empty
-                                });
-                            }
-                            else if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium)
-                            {
-                                warnings.Add(new BuildWarning
+                                    errors.Add(new BuildError
+                                    {
+                                        File = errorItem.FileName ?? string.Empty,
+                                        Line = errorItem.Line,
+                                        Column = errorItem.Column,
+                                        Code = errorItem.ErrorLevel.ToString(),
+                                        Message = errorItem.Description ?? string.Empty,
+                                        Project = errorItem.Project ?? string.Empty
+                                    });
+                                }
+                                else if (errorItem.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium)
                                 {
-                                    File = errorItem.FileName ?? string.Empty,
-                                    Line = errorItem.Line,
-                                    Column = errorItem.Column,
-                                    Code = errorItem.ErrorLevel.ToString(),
-                                    Message = errorItem.Description ?? string.Empty,
-                                    Project = errorItem.Project ?? string.Empty
-                                });
+                                    warnings.Add(new BuildWarning
+                                    {
+                                        File = errorItem.FileName ?? string.Empty,
+                                        Line = errorItem.Line,
+                                        Column = errorItem.Column,
+                                        Code = errorItem.ErrorLevel.ToString(),
+                                        Message = errorItem.Description ?? string.Empty,
+                                        Project = errorItem.Project ?? string.Empty
+                                    });
+                                }
                             }
                         }
                     }
@@ -923,6 +1097,123 @@ public class VisualStudioService : IVisualStudioService
         catch
         {
             return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Performs health checks on all connected instances and handles crash recovery.
+    /// </summary>
+    private void PerformHealthChecks(object? state)
+    {
+        try
+        {
+            var disconnectedInstances = new List<int>();
+            
+            foreach (var kvp in _connectedInstances.ToArray())
+            {
+                var processId = kvp.Key;
+                var dte = kvp.Value;
+                
+                try
+                {
+                    // Check if process still exists
+                    using var process = System.Diagnostics.Process.GetProcessById(processId);
+                    if (process.HasExited)
+                    {
+                        _logger.LogWarning("Visual Studio instance {ProcessId} has crashed or been closed", processId);
+                        disconnectedInstances.Add(processId);
+                        continue;
+                    }
+
+                    // Try to access a simple DTE property to verify COM connection
+                    _ = dte.Version;
+                    
+                    // Update last successful health check
+                    _lastHealthCheck[processId] = DateTime.UtcNow;
+                    
+                    _logger.LogDebug("Health check passed for VS instance {ProcessId}", processId);
+                }
+                catch (ArgumentException)
+                {
+                    // Process not found
+                    _logger.LogWarning("Visual Studio instance {ProcessId} process not found", processId);
+                    disconnectedInstances.Add(processId);
+                }
+                catch (COMException comEx)
+                {
+                    _logger.LogWarning(comEx, "COM connection lost for VS instance {ProcessId}", processId);
+                    disconnectedInstances.Add(processId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Health check failed for VS instance {ProcessId}", processId);
+                    disconnectedInstances.Add(processId);
+                }
+            }
+
+            // Clean up disconnected instances
+            foreach (var processId in disconnectedInstances)
+            {
+                if (_connectedInstances.TryGetValue(processId, out var dte))
+                {
+                    try
+                    {
+                        ComInteropHelper.SafeReleaseComObject(dte, _logger, "DTE");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error releasing COM object for crashed instance {ProcessId}", processId);
+                    }
+                    
+                    _connectedInstances.Remove(processId);
+                    _lastHealthCheck.Remove(processId);
+                }
+                
+                _logger.LogInformation("Cleaned up crashed/disconnected VS instance {ProcessId}", processId);
+            }
+
+            if (disconnectedInstances.Count > 0)
+            {
+                _logger.LogWarning("Detected and cleaned up {Count} crashed Visual Studio instances", 
+                    disconnectedInstances.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during health check operation");
+        }
+    }
+
+    /// <summary>
+    /// Disposes resources and stops health monitoring.
+    /// </summary>
+    public void Dispose()
+    {
+        try
+        {
+            _healthCheckTimer?.Dispose();
+            
+            // Disconnect from all instances
+            foreach (var kvp in _connectedInstances.ToArray())
+            {
+                try
+                {
+                    ComInteropHelper.SafeReleaseComObject(kvp.Value, _logger, "DTE");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error releasing COM object during disposal");
+                }
+            }
+            
+            _connectedInstances.Clear();
+            _lastHealthCheck.Clear();
+            
+            _logger.LogDebug("VisualStudioService disposed successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during VisualStudioService disposal");
         }
     }
 }

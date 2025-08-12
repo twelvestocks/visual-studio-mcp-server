@@ -17,8 +17,17 @@ var host = Host.CreateDefaultBuilder(args)
     .UseConsoleLifetime()
     .Build();
 
-var mcpServer = host.Services.GetRequiredService<VisualStudioMcpServer>();
-await mcpServer.RunAsync();
+try
+{
+    var mcpServer = host.Services.GetRequiredService<VisualStudioMcpServer>();
+    await mcpServer.RunAsync(host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping);
+}
+catch (Exception ex)
+{
+    var logger = host.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogCritical(ex, "Fatal error starting Visual Studio MCP Server");
+    Environment.Exit(1);
+}
 
 static void ConfigureServices(IServiceCollection services)
 {

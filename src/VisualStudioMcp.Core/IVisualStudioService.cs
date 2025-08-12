@@ -5,7 +5,7 @@ namespace VisualStudioMcp.Core;
 /// <summary>
 /// Core Visual Studio automation service interface.
 /// </summary>
-public interface IVisualStudioService
+public interface IVisualStudioService : IDisposable
 {
     /// <summary>
     /// Gets all currently running Visual Studio instances.
