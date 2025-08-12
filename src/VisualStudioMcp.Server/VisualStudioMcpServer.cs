@@ -72,7 +72,7 @@ public class VisualStudioMcpServer
                 
                 Console.WriteLine(responseJson);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is SystemException || ex is OutOfMemoryException || ex is StackOverflowException))
             {
                 _logger.LogError(ex, "Error processing MCP request");
                 
@@ -88,6 +88,7 @@ public class VisualStudioMcpServer
                 
                 Console.WriteLine(JsonSerializer.Serialize(errorResponse));
             }
+            // Let critical system exceptions terminate the process
         }
     }
 
@@ -165,11 +166,12 @@ public class VisualStudioMcpServer
             var result = await handler(arguments);
             return new { result = result };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!(ex is SystemException || ex is OutOfMemoryException || ex is StackOverflowException))
         {
             _logger.LogError(ex, "Error executing tool: {ToolName}", toolName);
             return new { error = new { code = "TOOL_ERROR", message = ex.Message } };
         }
+        // Let critical system exceptions bubble up unhandled
     }
 
     private async Task<object> HandleListInstancesAsync(JsonElement arguments)
@@ -212,12 +214,16 @@ public class VisualStudioMcpServer
                     "processId must be a valid integer");
             }
 
-            if (processId <= 0)
+            // Enhanced security validation
+            var validationResult = InputValidationHelper.ValidateProcessId(processId, requireVisualStudio: true);
+            if (!validationResult.IsValid)
             {
+                _logger.LogWarning("Process ID validation failed: {ErrorCode} - {ErrorMessage}", 
+                    validationResult.ErrorCode, validationResult.ErrorMessage);
                 return McpToolResult.CreateError(
-                    "Invalid processId parameter",
-                    "INVALID_PARAMETER",
-                    "processId must be a positive integer");
+                    validationResult.ErrorMessage!, 
+                    validationResult.ErrorCode!, 
+                    validationResult.ErrorDetails);
             }
 
             var instance = await _vsService.ConnectToInstanceAsync(processId);
@@ -254,22 +260,21 @@ public class VisualStudioMcpServer
             }
 
             var solutionPath = solutionPathElement.GetString();
-            if (string.IsNullOrWhiteSpace(solutionPath))
+            
+            // Enhanced path validation and sanitization
+            var pathValidation = InputValidationHelper.ValidateAndSanitizePath(solutionPath, ".sln");
+            if (!pathValidation.IsValid)
             {
+                _logger.LogWarning("Solution path validation failed: {ErrorCode} - {ErrorMessage}", 
+                    pathValidation.ErrorCode, pathValidation.ErrorMessage);
                 return McpToolResult.CreateError(
-                    "Invalid solutionPath parameter",
-                    "INVALID_PARAMETER",
-                    "solutionPath cannot be null or empty");
+                    pathValidation.ErrorMessage!, 
+                    pathValidation.ErrorCode!, 
+                    pathValidation.ErrorDetails);
             }
 
-            // Validate path format and security
-            if (solutionPath.Contains("..") || solutionPath.Any(c => Path.GetInvalidPathChars().Contains(c)))
-            {
-                return McpToolResult.CreateError(
-                    "Invalid solutionPath parameter",
-                    "INVALID_PATH",
-                    "solutionPath contains invalid characters or path traversal attempts");
-            }
+            // Use the sanitized path
+            solutionPath = (string)pathValidation.ValidatedValue!;
 
             var solutionInfo = await _vsService.OpenSolutionAsync(solutionPath);
             
@@ -302,11 +307,19 @@ public class VisualStudioMcpServer
                 configuration = configElement.GetString() ?? "Debug";
             }
 
-            // Validate configuration
-            if (string.IsNullOrWhiteSpace(configuration))
+            // Enhanced configuration validation
+            var configValidation = InputValidationHelper.ValidateBuildConfiguration(configuration);
+            if (!configValidation.IsValid)
             {
-                configuration = "Debug";
+                _logger.LogWarning("Build configuration validation failed: {ErrorCode} - {ErrorMessage}", 
+                    configValidation.ErrorCode, configValidation.ErrorMessage);
+                return McpToolResult.CreateError(
+                    configValidation.ErrorMessage!, 
+                    configValidation.ErrorCode!, 
+                    configValidation.ErrorDetails);
             }
+
+            configuration = (string)configValidation.ValidatedValue!;
 
             var buildResult = await _vsService.BuildSolutionAsync(configuration);
             

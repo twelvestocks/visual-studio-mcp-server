@@ -14,7 +14,7 @@ namespace VisualStudioMcp.Core;
 public class VisualStudioService : IVisualStudioService
 {
     private readonly ILogger<VisualStudioService> _logger;
-    private readonly Dictionary<int, DTE> _connectedInstances = new();
+    private readonly Dictionary<int, WeakReference<DTE>> _connectedInstances = new();
     private readonly Dictionary<int, DateTime> _lastHealthCheck = new();
     private readonly System.Threading.Timer _healthCheckTimer;
 
@@ -35,6 +35,70 @@ public class VisualStudioService : IVisualStudioService
         
         // Start health check timer - check every 30 seconds
         _healthCheckTimer = new System.Threading.Timer(PerformHealthChecks, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>
+    /// Gets a connected DTE instance by process ID, handling weak reference lifecycle.
+    /// </summary>
+    /// <param name="processId">The process ID of the Visual Studio instance.</param>
+    /// <returns>The DTE instance if alive, null otherwise.</returns>
+    private DTE? GetConnectedInstance(int processId)
+    {
+        if (_connectedInstances.TryGetValue(processId, out var weakRef) &&
+            weakRef.TryGetTarget(out var dte))
+        {
+            return dte;
+        }
+        
+        // Clean up dead reference
+        _connectedInstances.Remove(processId);
+        _lastHealthCheck.Remove(processId);
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the first available connected DTE instance.
+    /// </summary>
+    /// <returns>The first available DTE instance, null if none available.</returns>
+    private DTE? GetFirstConnectedInstance()
+    {
+        // Clean up dead references first
+        var deadKeys = new List<int>();
+        foreach (var kvp in _connectedInstances)
+        {
+            if (!kvp.Value.TryGetTarget(out _))
+            {
+                deadKeys.Add(kvp.Key);
+            }
+        }
+        
+        foreach (var key in deadKeys)
+        {
+            _connectedInstances.Remove(key);
+            _lastHealthCheck.Remove(key);
+        }
+
+        // Return first alive instance
+        foreach (var kvp in _connectedInstances)
+        {
+            if (kvp.Value.TryGetTarget(out var dte))
+            {
+                return dte;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Stores a connected DTE instance with weak reference.
+    /// </summary>
+    /// <param name="processId">The process ID.</param>
+    /// <param name="dte">The DTE instance to store.</param>
+    private void StoreConnectedInstance(int processId, DTE dte)
+    {
+        _connectedInstances[processId] = new WeakReference<DTE>(dte);
+        _lastHealthCheck[processId] = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -232,7 +296,7 @@ public class VisualStudioService : IVisualStudioService
                         if (obj is DTE dte)
                         {
                             // Store the connected instance for future use
-                            _connectedInstances[processId] = dte;
+                            StoreConnectedInstance(processId, dte);
                             
                             return ComInteropHelper.WithComObject(
                                 () => dte,
@@ -261,7 +325,7 @@ public class VisualStudioService : IVisualStudioService
         return await Task.Run(() =>
         {
             // Get the first available connected instance, or throw if none available
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -295,7 +359,7 @@ public class VisualStudioService : IVisualStudioService
 
         return await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -378,7 +442,7 @@ public class VisualStudioService : IVisualStudioService
         
         return await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -432,7 +496,7 @@ public class VisualStudioService : IVisualStudioService
 
         await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -518,10 +582,11 @@ public class VisualStudioService : IVisualStudioService
         {
             try
             {
-                if (_connectedInstances.TryGetValue(processId, out var dte))
+                var dte = GetConnectedInstance(processId);
+                if (dte != null)
                 {
                     // Remove from connected instances
-                    _connectedInstances.Remove(processId);
+                    // Instance already removed by GetConnectedInstance if dead
                     
                     // Release the COM object
                     ComInteropHelper.SafeReleaseComObject(dte, _logger, "DTE");
@@ -546,7 +611,7 @@ public class VisualStudioService : IVisualStudioService
         
         return await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -597,7 +662,7 @@ public class VisualStudioService : IVisualStudioService
 
         return await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -650,7 +715,7 @@ public class VisualStudioService : IVisualStudioService
 
         await Task.Run(() =>
         {
-            var connectedInstance = _connectedInstances.Values.FirstOrDefault();
+            var connectedInstance = GetFirstConnectedInstance();
             if (connectedInstance == null)
             {
                 throw new InvalidOperationException("No Visual Studio instance is connected. Use ConnectToInstanceAsync first.");
@@ -1112,7 +1177,16 @@ public class VisualStudioService : IVisualStudioService
             foreach (var kvp in _connectedInstances.ToArray())
             {
                 var processId = kvp.Key;
-                var dte = kvp.Value;
+                
+                // Check if the weak reference is still alive
+                if (!kvp.Value.TryGetTarget(out var dte))
+                {
+                    // Clean up dead reference
+                    _connectedInstances.Remove(processId);
+                    _lastHealthCheck.Remove(processId);
+                    _logger.LogDebug("Removed dead DTE reference for process {ProcessId}", processId);
+                    continue;
+                }
                 
                 try
                 {
@@ -1154,7 +1228,8 @@ public class VisualStudioService : IVisualStudioService
             // Clean up disconnected instances
             foreach (var processId in disconnectedInstances)
             {
-                if (_connectedInstances.TryGetValue(processId, out var dte))
+                var dte = GetConnectedInstance(processId);
+                if (dte != null)
                 {
                     try
                     {
@@ -1165,7 +1240,7 @@ public class VisualStudioService : IVisualStudioService
                         _logger.LogDebug(ex, "Error releasing COM object for crashed instance {ProcessId}", processId);
                     }
                     
-                    _connectedInstances.Remove(processId);
+                    // Instance already removed by GetConnectedInstance if dead
                     _lastHealthCheck.Remove(processId);
                 }
                 
@@ -1196,13 +1271,16 @@ public class VisualStudioService : IVisualStudioService
             // Disconnect from all instances
             foreach (var kvp in _connectedInstances.ToArray())
             {
-                try
+                if (kvp.Value.TryGetTarget(out var dte))
                 {
-                    ComInteropHelper.SafeReleaseComObject(kvp.Value, _logger, "DTE");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Error releasing COM object during disposal");
+                    try
+                    {
+                        ComInteropHelper.SafeReleaseComObject(dte, _logger, "DTE");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error releasing COM object during disposal");
+                    }
                 }
             }
             
