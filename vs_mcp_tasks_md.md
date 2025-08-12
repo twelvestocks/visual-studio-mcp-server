@@ -256,18 +256,21 @@
   - Create MCP tool for listing running VS instances
   - Add instance metadata (PID, version, solution)
   - Include health status and connection state
+  - **CRITICAL:** Implement comprehensive input validation (Code Review Rec. 2)
   - **Acceptance:** Returns structured list of VS instances
 
 - [ ] **TOOL-002: vs_connect_instance Tool**
   - Create tool for connecting to specific VS instance
   - Add connection validation and error handling
   - Include connection state management
+  - **CRITICAL:** Implement PID validation and sanitisation (Code Review Rec. 2)
   - **Acceptance:** Can connect to any running VS instance by PID
 
 - [ ] **TOOL-003: vs_open_solution Tool**
   - Implement solution opening with path validation
   - Add progress monitoring for large solutions
   - Include error handling for invalid paths
+  - **CRITICAL:** Implement path sanitisation and traversal protection (Code Review Rec. 2)
   - **Acceptance:** Can open any valid solution file
 
 - [ ] **TOOL-004: vs_build_solution Tool**
@@ -645,6 +648,15 @@
 ---
 
 ### Unit Testing Implementation
+- [ ] **TEST-000: Code Review Recommendation 8 - Foundation Test Coverage**
+  - Implement unit tests for existing ComInteropHelper class
+  - Add tests for MemoryMonitor functionality
+  - Create tests for exception handling patterns
+  - Add tests for async/await patterns with COM objects
+  - **Acceptance:** >80% code coverage for all existing foundation code
+  - **Dependencies:** Must wait until MCP tools are implemented for comprehensive coverage
+  - **Notes:** Addresses code review recommendation 8 - complete when current codebase has sufficient test coverage
+
 - [ ] **TEST-001: Core Service Unit Tests**
   - Write comprehensive tests for VisualStudioService
   - Add COM object mocking with Moq
