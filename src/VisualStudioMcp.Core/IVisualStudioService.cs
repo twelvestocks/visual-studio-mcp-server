@@ -46,4 +46,17 @@ public interface IVisualStudioService
     /// <param name="commandName">The name of the command to execute.</param>
     /// <param name="args">Optional command arguments.</param>
     Task ExecuteCommandAsync(string commandName, string args = "");
+
+    /// <summary>
+    /// Checks the health of a connection to a Visual Studio instance.
+    /// </summary>
+    /// <param name="processId">The process ID of the Visual Studio instance to check.</param>
+    /// <returns>True if the connection is healthy, false otherwise.</returns>
+    Task<bool> IsConnectionHealthyAsync(int processId);
+
+    /// <summary>
+    /// Gracefully disconnects from a Visual Studio instance.
+    /// </summary>
+    /// <param name="processId">The process ID of the Visual Studio instance to disconnect from.</param>
+    Task DisconnectFromInstanceAsync(int processId);
 }

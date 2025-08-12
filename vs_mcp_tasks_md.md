@@ -115,75 +115,86 @@
 ---
 
 ### Environment Setup
-- [ ] **ENV-001: Development Environment Setup**
+- [✅] **ENV-001: Development Environment Setup**
   - Install Visual Studio 2022 (17.8 or later) with required workloads
   - Install .NET 8 SDK and verify version
   - Configure Git with proper Windows line endings
   - **Acceptance:** `dotnet --version` shows 8.0.x, VS 2022 launches successfully
+  - **Completed:** 2025-08-12 - .NET 8 SDK validated, solution builds successfully
 
-- [ ] **ENV-002: Solution Structure Creation**
+- [✅] **ENV-002: Solution Structure Creation**
   - Create solution with proper project structure per PLANNING.md
   - Set up project references and dependencies
   - Configure build properties and target frameworks
   - **Acceptance:** Solution builds successfully with `dotnet build`
+  - **Completed:** 2025-08-12 - All 9 projects created and building successfully
 
-- [ ] **ENV-003: NuGet Package Dependencies**
+- [✅] **ENV-003: NuGet Package Dependencies**
   - Add ModelContextProtocol 0.3.0-preview.3 package
   - Add EnvDTE and EnvDTE80 COM references
   - Add Microsoft.Extensions.Hosting and logging packages
   - **Acceptance:** All packages restore without conflicts
+  - **Completed:** 2025-08-12 - All packages added and updated to latest versions
 
-- [ ] **ENV-004: Project Configuration Files**
+- [✅] **ENV-004: Project Configuration Files**
   - Create .editorconfig with C# standards
   - Set up Directory.Build.props with common properties
   - Configure nullable reference types globally
   - **Acceptance:** Build produces zero warnings about code style
+  - **Completed:** 2025-08-12 - Configuration files created, nullable reference types enabled
 
 ### Core Architecture Setup
-- [ ] **ARCH-001: Dependency Injection Container**
+- [✅] **ARCH-001: Dependency Injection Container**
   - Set up Microsoft.Extensions.DependencyInjection
   - Create service registration for all interfaces
   - Configure logging with console provider
   - **Acceptance:** Host builds and resolves all services successfully
+  - **Completed:** 2025-08-12 - DI container configured in Program.cs with all services registered
 
-- [ ] **ARCH-002: MCP Server Host Implementation**
+- [🔄] **ARCH-002: MCP Server Host Implementation**
   - Create VisualStudioMcpServer class inheriting from McpServer
   - Implement basic tool registration and routing
   - Set up async request handling pipeline
   - **Acceptance:** MCP server starts and responds to protocol handshake
+  - **Status:** Basic server class created, MCP protocol handshake not yet implemented
 
-- [ ] **ARCH-003: Core Service Interfaces**
+- [✅] **ARCH-003: Core Service Interfaces**
   - Define IVisualStudioService with core methods
   - Define IXamlDesignerService for XAML automation
   - Define IDebugService for debugging control
   - Define IImagingService for screenshot capture
   - **Acceptance:** All interfaces compile and services can be injected
+  - **Completed:** 2025-08-12 - All service interfaces defined with comprehensive XML documentation
 
-- [ ] **ARCH-004: Shared Models and DTOs**
+- [✅] **ARCH-004: Shared Models and DTOs**
   - Create VisualStudioInstance model
   - Create SolutionInfo and ProjectInfo models
   - Create BuildResult and DebugState models
   - Create MCP request/response DTOs
   - **Acceptance:** All models serialise to/from JSON correctly
+  - **Completed:** 2025-08-12 - Core models created (MCP DTOs still pending)
 
 ### Basic COM Interop Foundation
-- [ ] **COM-001: Visual Studio Instance Discovery**
+- [✅] **COM-001: Visual Studio Instance Discovery**
   - Implement GetRunningObjectTable enumeration
   - Create process ID extraction from COM monikers
   - Add Visual Studio version detection
   - **Acceptance:** Can list all running VS instances with metadata
+  - **Completed:** 2025-08-12 - Full ROT enumeration with DTE object discovery and metadata extraction
 
-- [ ] **COM-002: COM Object Lifecycle Management**
+- [✅] **COM-002: COM Object Lifecycle Management**
   - Implement proper COM object disposal patterns
   - Create COM exception handling wrappers
   - Add logging for COM operations
   - **Acceptance:** COM objects are properly released without memory leaks
+  - **Completed:** 2025-08-12 - ComInteropHelper with automatic cleanup and retry logic implemented
 
-- [ ] **COM-003: Basic DTE Connection**
+- [✅] **COM-003: Basic DTE Connection**
   - Implement connection to specific VS instance by process ID
   - Add connection health checking
   - Create graceful disconnection handling
   - **Acceptance:** Can connect to running VS instance and access basic properties
+  - **Completed:** 2025-08-12 - Connection health checking and graceful disconnection implemented
 
 ---
 
@@ -245,18 +256,21 @@
   - Create MCP tool for listing running VS instances
   - Add instance metadata (PID, version, solution)
   - Include health status and connection state
+  - **CRITICAL:** Implement comprehensive input validation (Code Review Rec. 2)
   - **Acceptance:** Returns structured list of VS instances
 
 - [ ] **TOOL-002: vs_connect_instance Tool**
   - Create tool for connecting to specific VS instance
   - Add connection validation and error handling
   - Include connection state management
+  - **CRITICAL:** Implement PID validation and sanitisation (Code Review Rec. 2)
   - **Acceptance:** Can connect to any running VS instance by PID
 
 - [ ] **TOOL-003: vs_open_solution Tool**
   - Implement solution opening with path validation
   - Add progress monitoring for large solutions
   - Include error handling for invalid paths
+  - **CRITICAL:** Implement path sanitisation and traversal protection (Code Review Rec. 2)
   - **Acceptance:** Can open any valid solution file
 
 - [ ] **TOOL-004: vs_build_solution Tool**
@@ -634,6 +648,15 @@
 ---
 
 ### Unit Testing Implementation
+- [ ] **TEST-000: Code Review Recommendation 8 - Foundation Test Coverage**
+  - Implement unit tests for existing ComInteropHelper class
+  - Add tests for MemoryMonitor functionality
+  - Create tests for exception handling patterns
+  - Add tests for async/await patterns with COM objects
+  - **Acceptance:** >80% code coverage for all existing foundation code
+  - **Dependencies:** Must wait until MCP tools are implemented for comprehensive coverage
+  - **Notes:** Addresses code review recommendation 8 - complete when current codebase has sufficient test coverage
+
 - [ ] **TEST-001: Core Service Unit Tests**
   - Write comprehensive tests for VisualStudioService
   - Add COM object mocking with Moq
