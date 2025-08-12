@@ -175,23 +175,26 @@
   - **Completed:** 2025-08-12 - Core models created (MCP DTOs still pending)
 
 ### Basic COM Interop Foundation
-- [ ] **COM-001: Visual Studio Instance Discovery**
+- [✅] **COM-001: Visual Studio Instance Discovery**
   - Implement GetRunningObjectTable enumeration
   - Create process ID extraction from COM monikers
   - Add Visual Studio version detection
   - **Acceptance:** Can list all running VS instances with metadata
+  - **Completed:** 2025-08-12 - Full ROT enumeration with DTE object discovery and metadata extraction
 
-- [ ] **COM-002: COM Object Lifecycle Management**
+- [✅] **COM-002: COM Object Lifecycle Management**
   - Implement proper COM object disposal patterns
   - Create COM exception handling wrappers
   - Add logging for COM operations
   - **Acceptance:** COM objects are properly released without memory leaks
+  - **Completed:** 2025-08-12 - ComInteropHelper with automatic cleanup and retry logic implemented
 
-- [ ] **COM-003: Basic DTE Connection**
+- [✅] **COM-003: Basic DTE Connection**
   - Implement connection to specific VS instance by process ID
   - Add connection health checking
   - Create graceful disconnection handling
   - **Acceptance:** Can connect to running VS instance and access basic properties
+  - **Completed:** 2025-08-12 - Connection health checking and graceful disconnection implemented
 
 ---
 
