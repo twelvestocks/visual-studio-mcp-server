@@ -3,7 +3,7 @@ namespace VisualStudioMcp.Debug;
 /// <summary>
 /// Service interface for Visual Studio debugging automation.
 /// </summary>
-public interface IDebugService
+public interface IDebugService : IDisposable
 {
     /// <summary>
     /// Starts debugging the specified project or the startup project.

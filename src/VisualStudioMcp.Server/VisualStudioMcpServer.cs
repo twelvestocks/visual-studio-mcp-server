@@ -114,7 +114,14 @@ public class VisualStudioMcpServer
                             new { name = "vs_connect_instance", description = "Connect to a specific Visual Studio instance" },
                             new { name = "vs_open_solution", description = "Open a solution in the connected Visual Studio instance" },
                             new { name = "vs_build_solution", description = "Build the currently open solution" },
-                            new { name = "vs_get_projects", description = "Get all projects in the currently open solution" }
+                            new { name = "vs_get_projects", description = "Get all projects in the currently open solution" },
+                            new { name = "vs_start_debugging", description = "Start debugging the specified project or startup project" },
+                            new { name = "vs_stop_debugging", description = "Stop the current debugging session" },
+                            new { name = "vs_get_debug_state", description = "Get the current debugging state" },
+                            new { name = "vs_set_breakpoint", description = "Set a breakpoint at the specified location" },
+                            new { name = "vs_get_breakpoints", description = "Get all breakpoints in the current session" },
+                            new { name = "vs_get_local_variables", description = "Get local variables in the current debugging context" },
+                            new { name = "vs_get_call_stack", description = "Get the current call stack" }
                         }
                     }
                 };
@@ -150,6 +157,15 @@ public class VisualStudioMcpServer
         _tools["vs_open_solution"] = HandleOpenSolutionAsync;
         _tools["vs_build_solution"] = HandleBuildSolutionAsync;
         _tools["vs_get_projects"] = HandleGetProjectsAsync;
+        
+        // Debug tools
+        _tools["vs_start_debugging"] = HandleStartDebuggingAsync;
+        _tools["vs_stop_debugging"] = HandleStopDebuggingAsync;
+        _tools["vs_get_debug_state"] = HandleGetDebugStateAsync;
+        _tools["vs_set_breakpoint"] = HandleSetBreakpointAsync;
+        _tools["vs_get_breakpoints"] = HandleGetBreakpointsAsync;
+        _tools["vs_get_local_variables"] = HandleGetLocalVariablesAsync;
+        _tools["vs_get_call_stack"] = HandleGetCallStackAsync;
 
         _logger.LogInformation("Registered {Count} MCP tools", _tools.Count);
     }
@@ -363,4 +379,218 @@ public class VisualStudioMcpServer
                 ex.Message);
         }
     }
+
+    #region Debug Tool Handlers
+
+    private async Task<object> HandleStartDebuggingAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_start_debugging tool");
+
+            string? projectName = null;
+            if (arguments.TryGetProperty("projectName", out var projectElement))
+            {
+                projectName = projectElement.GetString();
+            }
+
+            var debugState = await _debugService.StartDebuggingAsync(projectName);
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                debugState = debugState,
+                projectName = projectName ?? "startup project",
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_start_debugging tool");
+            return McpToolResult.CreateError(
+                "Failed to start debugging",
+                "DEBUG_START_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleStopDebuggingAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_stop_debugging tool");
+
+            await _debugService.StopDebuggingAsync();
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                stopped = true,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_stop_debugging tool");
+            return McpToolResult.CreateError(
+                "Failed to stop debugging",
+                "DEBUG_STOP_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleGetDebugStateAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_get_debug_state tool");
+
+            var debugState = await _debugService.GetCurrentStateAsync();
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                debugState = debugState,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_get_debug_state tool");
+            return McpToolResult.CreateError(
+                "Failed to get debug state",
+                "DEBUG_STATE_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleSetBreakpointAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_set_breakpoint tool");
+
+            if (!arguments.TryGetProperty("file", out var fileElement))
+            {
+                return McpToolResult.CreateError(
+                    "Missing file parameter",
+                    "INVALID_PARAMETER",
+                    "file is required");
+            }
+
+            if (!arguments.TryGetProperty("line", out var lineElement) || 
+                !lineElement.TryGetInt32(out var line))
+            {
+                return McpToolResult.CreateError(
+                    "Invalid or missing line parameter",
+                    "INVALID_PARAMETER",
+                    "line must be a valid integer");
+            }
+
+            var file = fileElement.GetString();
+            if (string.IsNullOrWhiteSpace(file))
+            {
+                return McpToolResult.CreateError(
+                    "Invalid file parameter",
+                    "INVALID_PARAMETER",
+                    "file cannot be null or empty");
+            }
+
+            string? condition = null;
+            if (arguments.TryGetProperty("condition", out var conditionElement))
+            {
+                condition = conditionElement.GetString();
+            }
+
+            var breakpoint = await _debugService.AddBreakpointAsync(file, line, condition);
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                breakpoint = breakpoint,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_set_breakpoint tool");
+            return McpToolResult.CreateError(
+                "Failed to set breakpoint",
+                "DEBUG_BREAKPOINT_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleGetBreakpointsAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_get_breakpoints tool");
+
+            var breakpoints = await _debugService.GetBreakpointsAsync();
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                breakpoints = breakpoints,
+                count = breakpoints.Length,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_get_breakpoints tool");
+            return McpToolResult.CreateError(
+                "Failed to get breakpoints",
+                "DEBUG_BREAKPOINTS_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleGetLocalVariablesAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_get_local_variables tool");
+
+            var variables = await _debugService.GetLocalVariablesAsync();
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                variables = variables,
+                count = variables.Length,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_get_local_variables tool");
+            return McpToolResult.CreateError(
+                "Failed to get local variables",
+                "DEBUG_VARIABLES_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleGetCallStackAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_get_call_stack tool");
+
+            var callStack = await _debugService.GetCallStackAsync();
+            
+            return McpToolResult.CreateSuccess(new
+            {
+                callStack = callStack,
+                count = callStack.Length,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_get_call_stack tool");
+            return McpToolResult.CreateError(
+                "Failed to get call stack",
+                "DEBUG_CALLSTACK_FAILED",
+                ex.Message);
+        }
+    }
+
+    #endregion
 }
