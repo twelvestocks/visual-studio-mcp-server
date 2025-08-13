@@ -94,7 +94,7 @@ public class DebugService : IDebugService
                 }
 
                 // Wait a moment for debugging to start
-                System.Threading.Thread.Sleep(1000);
+                await Task.Delay(1000);
                 
                 var state = GetDebugStateFromDebugger(debugger);
                 _logger.LogInformation("Debugging started successfully. Mode: {Mode}, IsPaused: {IsPaused}", state.Mode, state.IsPaused);
@@ -137,7 +137,7 @@ public class DebugService : IDebugService
                 debugger.Stop(true); // true = terminate all processes
 
                 // Wait a moment for debugging to stop
-                System.Threading.Thread.Sleep(500);
+                await Task.Delay(500);
                 
                 _logger.LogInformation("Debugging session stopped successfully");
             }
@@ -1167,8 +1167,11 @@ public class DebugService : IDebugService
                 {
                     await _visualStudioService.ConnectToInstanceAsync(instance.ProcessId);
                     
-                    // For now, we'll use reflection to access the private method
-                    // This is not ideal but necessary until we can refactor the architecture
+                    // ARCHITECTURAL DEBT: Using reflection to access private GetConnectedInstance method
+                    // TODO: This is temporary and should be refactored when the architecture is improved
+                    // - Consider exposing GetConnectedInstance as public in IVisualStudioService
+                    // - Or create a dedicated method for debugging service access to DTE instances
+                    // - This reflection access introduces runtime coupling and reduces compile-time safety
                     var serviceType = _visualStudioService.GetType();
                     var getConnectedInstanceMethod = serviceType.GetMethod("GetConnectedInstance", 
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
