@@ -355,6 +355,24 @@ public class DebugService : IDebugService
                                     Type = expression.Type ?? "unknown",
                                     Scope = "Local"
                                 };
+                                
+                                // Try to get additional type information if available
+                                try
+                                {
+                                    if (!string.IsNullOrEmpty(expression.Type))
+                                    {
+                                        // For complex types, try to get more detailed information
+                                        if (expression.Type.Contains(".") || expression.Type.Contains("["))
+                                        {
+                                            variable.Type = expression.Type;
+                                        }
+                                    }
+                                }
+                                catch (Exception typeEx)
+                                {
+                                    _logger.LogDebug(typeEx, "Could not extract detailed type information for: {Name}", expression.Name);
+                                }
+                                
                                 variables.Add(variable);
                             }
                             catch (Exception ex)
@@ -375,6 +393,24 @@ public class DebugService : IDebugService
                                     Type = expression.Type ?? "unknown",
                                     Scope = "Parameter"
                                 };
+                                
+                                // Try to get additional type information if available
+                                try
+                                {
+                                    if (!string.IsNullOrEmpty(expression.Type))
+                                    {
+                                        // For complex types, try to get more detailed information
+                                        if (expression.Type.Contains(".") || expression.Type.Contains("["))
+                                        {
+                                            variable.Type = expression.Type;
+                                        }
+                                    }
+                                }
+                                catch (Exception typeEx)
+                                {
+                                    _logger.LogDebug(typeEx, "Could not extract detailed type information for parameter: {Name}", expression.Name);
+                                }
+                                
                                 variables.Add(variable);
                             }
                             catch (Exception ex)
@@ -441,9 +477,13 @@ public class DebugService : IDebugService
                                 {
                                     Method = stackFrame.FunctionName ?? "Unknown",
                                     File = ExtractFileName(stackFrame.FunctionName),
-                                    Line = 0, // Line number not directly available from StackFrame
+                                    Line = 0,
                                     Module = stackFrame.Module ?? "Unknown"
                                 };
+                                
+                                // Note: StackFrame in EnvDTE doesn't have FileName and LineNumber properties
+                                // We'll rely on the existing ExtractFileName method for file information
+                                
                                 frames.Add(frame);
                             }
                             catch (Exception ex)
@@ -467,6 +507,637 @@ public class DebugService : IDebugService
                 throw;
             }
         });
+    }
+
+    /// <summary>
+    /// Steps into the next statement or method call.
+    /// </summary>
+    /// <returns>The debug state after stepping.</returns>
+    public async Task<DebugState> StepIntoAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogInformation("Stepping into next statement");
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Check if debugging is paused
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    throw new InvalidOperationException("Debugger is not paused. Stepping is only available when execution is paused.");
+                }
+
+                // Perform step into operation
+                debugger.StepInto();
+
+                // Wait a moment for the step to complete
+                await Task.Delay(100);
+
+                var state = GetDebugStateFromDebugger(debugger);
+                _logger.LogInformation("Step into completed. Mode: {Mode}, IsPaused: {IsPaused}", state.Mode, state.IsPaused);
+
+                return state;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to step into");
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Steps over the next statement or method call.
+    /// </summary>
+    /// <returns>The debug state after stepping.</returns>
+    public async Task<DebugState> StepOverAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogInformation("Stepping over next statement");
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Check if debugging is paused
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    throw new InvalidOperationException("Debugger is not paused. Stepping is only available when execution is paused.");
+                }
+
+                // Perform step over operation
+                debugger.StepOver();
+
+                // Wait a moment for the step to complete
+                await Task.Delay(100);
+
+                var state = GetDebugStateFromDebugger(debugger);
+                _logger.LogInformation("Step over completed. Mode: {Mode}, IsPaused: {IsPaused}", state.Mode, state.IsPaused);
+
+                return state;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to step over");
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Steps out of the current method.
+    /// </summary>
+    /// <returns>The debug state after stepping.</returns>
+    public async Task<DebugState> StepOutAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogInformation("Stepping out of current method");
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Check if debugging is paused
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    throw new InvalidOperationException("Debugger is not paused. Stepping is only available when execution is paused.");
+                }
+
+                // Perform step out operation
+                debugger.StepOut();
+
+                // Wait a moment for the step to complete
+                await Task.Delay(100);
+
+                var state = GetDebugStateFromDebugger(debugger);
+                _logger.LogInformation("Step out completed. Mode: {Mode}, IsPaused: {IsPaused}", state.Mode, state.IsPaused);
+
+                return state;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to step out");
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets variables from a specific stack frame.
+    /// </summary>
+    /// <param name="frameIndex">The index of the stack frame (0 = top frame).</param>
+    /// <returns>Array of variables from the specified frame.</returns>
+    public async Task<Variable[]> GetVariablesFromFrameAsync(int frameIndex = 0)
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogDebug("Getting variables from stack frame {FrameIndex}", frameIndex);
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    _logger.LogDebug("No active debugger found, returning empty variables array");
+                    return Array.Empty<Variable>();
+                }
+
+                // Check if debugging is paused (variables only available when paused)
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    _logger.LogDebug("Debugger is not paused (mode: {Mode}), cannot retrieve variables", debugger.CurrentMode);
+                    return Array.Empty<Variable>();
+                }
+
+                var variables = new List<Variable>();
+
+                try
+                {
+                    // Get current stack frame
+                    var currentThread = debugger.CurrentThread;
+                    if (currentThread?.StackFrames?.Count > 0)
+                    {
+                        // Convert 0-based index to 1-based indexing used by EnvDTE
+                        var dteFrameIndex = frameIndex + 1;
+                        
+                        if (dteFrameIndex <= currentThread.StackFrames.Count)
+                        {
+                            var frame = currentThread.StackFrames.Item(dteFrameIndex);
+                            
+                            // Get locals from the specified frame
+                            foreach (EnvDTE.Expression expression in frame.Locals)
+                            {
+                                try
+                                {
+                                    var variable = new Variable
+                                    {
+                                        Name = expression.Name,
+                                        Value = expression.Value?.ToString() ?? "<null>",
+                                        Type = expression.Type ?? "unknown",
+                                        Scope = "Local"
+                                    };
+                                    
+                                    // Try to get additional type information if available
+                                    try
+                                    {
+                                        if (!string.IsNullOrEmpty(expression.Type))
+                                        {
+                                            // For complex types, preserve the full type information
+                                            if (expression.Type.Contains(".") || expression.Type.Contains("["))
+                                            {
+                                                variable.Type = expression.Type;
+                                            }
+                                        }
+                                    }
+                                    catch (Exception typeEx)
+                                    {
+                                        _logger.LogDebug(typeEx, "Could not extract detailed type information for: {Name}", expression.Name);
+                                    }
+                                    
+                                    variables.Add(variable);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to extract variable information for: {Name}", expression.Name);
+                                }
+                            }
+
+                            // Get arguments/parameters
+                            foreach (EnvDTE.Expression expression in frame.Arguments)
+                            {
+                                try
+                                {
+                                    var variable = new Variable
+                                    {
+                                        Name = expression.Name,
+                                        Value = expression.Value?.ToString() ?? "<null>",
+                                        Type = expression.Type ?? "unknown",
+                                        Scope = "Parameter"
+                                    };
+                                    
+                                    // Try to get additional type information if available
+                                    try
+                                    {
+                                        if (!string.IsNullOrEmpty(expression.Type))
+                                        {
+                                            // For complex types, preserve the full type information
+                                            if (expression.Type.Contains(".") || expression.Type.Contains("["))
+                                            {
+                                                variable.Type = expression.Type;
+                                            }
+                                        }
+                                    }
+                                    catch (Exception typeEx)
+                                    {
+                                        _logger.LogDebug(typeEx, "Could not extract detailed type information for parameter: {Name}", expression.Name);
+                                    }
+                                    
+                                    variables.Add(variable);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed to extract parameter information for: {Name}", expression.Name);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Frame index {FrameIndex} is out of range. Stack has {FrameCount} frames", 
+                                frameIndex, currentThread.StackFrames.Count);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to access stack frame {FrameIndex} for variable inspection", frameIndex);
+                }
+
+                _logger.LogDebug("Retrieved {Count} variables from frame {FrameIndex}", variables.Count, frameIndex);
+                return variables.ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get variables from frame {FrameIndex}", frameIndex);
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets a specific stack frame with detailed information.
+    /// </summary>
+    /// <param name="frameIndex">The index of the stack frame (0 = top frame).</param>
+    /// <returns>The specified call stack frame.</returns>
+    public async Task<CallStackFrame?> GetStackFrameAsync(int frameIndex = 0)
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogDebug("Getting stack frame {FrameIndex}", frameIndex);
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    _logger.LogDebug("No active debugger found");
+                    return null;
+                }
+
+                // Check if debugging is paused (call stack only available when paused)
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    _logger.LogDebug("Debugger is not paused (mode: {Mode}), cannot retrieve call stack", debugger.CurrentMode);
+                    return null;
+                }
+
+                try
+                {
+                    var currentThread = debugger.CurrentThread;
+                    if (currentThread?.StackFrames?.Count > 0)
+                    {
+                        // Convert 0-based index to 1-based indexing used by EnvDTE
+                        var dteFrameIndex = frameIndex + 1;
+                        
+                        if (dteFrameIndex <= currentThread.StackFrames.Count)
+                        {
+                            var stackFrame = currentThread.StackFrames.Item(dteFrameIndex);
+                            
+                            var frame = new CallStackFrame
+                            {
+                                Method = stackFrame.FunctionName ?? "Unknown",
+                                File = ExtractFileName(stackFrame.FunctionName),
+                                Line = 0,
+                                Module = stackFrame.Module ?? "Unknown"
+                            };
+                            
+                            // Note: StackFrame in EnvDTE doesn't have FileName and LineNumber properties
+                            // We'll rely on the existing ExtractFileName method for file information
+                            
+                            _logger.LogDebug("Retrieved stack frame {FrameIndex}: {Method} at {File}:{Line}", 
+                                frameIndex, frame.Method, frame.File, frame.Line);
+                            return frame;
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Frame index {FrameIndex} is out of range. Stack has {FrameCount} frames", 
+                                frameIndex, currentThread.StackFrames.Count);
+                            return null;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to access stack frame {FrameIndex}", frameIndex);
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get stack frame {FrameIndex}", frameIndex);
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Evaluates an expression in the current debugging context.
+    /// </summary>
+    /// <param name="expression">The expression to evaluate.</param>
+    /// <returns>The result of the expression evaluation.</returns>
+    public async Task<string> EvaluateExpressionAsync(string expression)
+    {
+        _logger.LogDebug("Evaluating expression: {Expression}", expression);
+
+        var debugger = await GetActiveDebuggerAsync();
+        if (debugger == null)
+        {
+            throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+        }
+
+        // Check if debugging is paused (expression evaluation only available when paused)
+        if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+        {
+            throw new InvalidOperationException("Debugger is not paused. Expression evaluation is only available when execution is paused.");
+        }
+
+        // Note: StackFrame in EnvDTE doesn't have an Evaluate method
+        // Expression evaluation is not currently supported
+        _logger.LogWarning("Expression evaluation not implemented due to missing StackFrame.Evaluate method");
+        throw new NotImplementedException("Expression evaluation not supported with current EnvDTE interface");
+    }
+
+    /// <summary>
+    /// Modifies the value of a variable in the current debugging context.
+    /// </summary>
+    /// <param name="variableName">The name of the variable to modify.</param>
+    /// <param name="newValue">The new value to assign to the variable.</param>
+    /// <returns>True if the modification was successful, false otherwise.</returns>
+    public async Task<bool> ModifyVariableAsync(string variableName, string newValue)
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogDebug("Modifying variable {VariableName} to {NewValue}", variableName, newValue);
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Check if debugging is paused (variable modification only available when paused)
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    throw new InvalidOperationException("Debugger is not paused. Variable modification is only available when execution is paused.");
+                }
+
+                // Get the current stack frame for variable access
+                var currentThread = debugger.CurrentThread;
+                if (currentThread?.StackFrames?.Count > 0)
+                {
+                    var topFrame = currentThread.StackFrames.Item(1); // 1-based indexing
+                    
+                    // Try to find the variable in locals first
+                    foreach (EnvDTE.Expression expression in topFrame.Locals)
+                    {
+                        if (expression.Name.Equals(variableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Modify the variable value
+                            expression.Value = newValue;
+                            _logger.LogDebug("Successfully modified variable {VariableName} to {NewValue}", variableName, newValue);
+                            return true;
+                        }
+                    }
+                    
+                    // If not found in locals, try arguments/parameters
+                    foreach (EnvDTE.Expression expression in topFrame.Arguments)
+                    {
+                        if (expression.Name.Equals(variableName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Modify the variable value
+                            expression.Value = newValue;
+                            _logger.LogDebug("Successfully modified parameter {VariableName} to {NewValue}", variableName, newValue);
+                            return true;
+                        }
+                    }
+                    
+                    _logger.LogWarning("Variable {VariableName} not found in current context", variableName);
+                    return false;
+                }
+                else
+                {
+                    throw new InvalidOperationException("No stack frames available for variable modification.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to modify variable {VariableName} to {NewValue}", variableName, newValue);
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets memory usage information for the debugged process.
+    /// </summary>
+    /// <returns>Memory usage information.</returns>
+    public async Task<MemoryInfo> GetMemoryInfoAsync()
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogDebug("Getting memory information");
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Get the DTE from the debugger to access process information
+                var dte = debugger.Parent;
+                if (dte == null)
+                {
+                    throw new InvalidOperationException("Could not access Visual Studio DTE object.");
+                }
+
+                var memoryInfo = new MemoryInfo
+                {
+                    ProcessId = 0,
+                    ProcessName = "Unknown"
+                };
+
+                try
+                {
+                    // Try to get process information from DTE
+                    memoryInfo.ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
+                    memoryInfo.ProcessName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;
+                    
+                    // Get memory information from the current process as a fallback
+                    var process = System.Diagnostics.Process.GetCurrentProcess();
+                    memoryInfo.WorkingSet = process.WorkingSet64;
+                    memoryInfo.PrivateMemory = process.PrivateMemorySize64;
+                    memoryInfo.VirtualMemory = process.VirtualMemorySize64;
+                    memoryInfo.HandleCount = process.HandleCount;
+                    memoryInfo.ThreadCount = process.Threads.Count;
+                }
+                catch (Exception processEx)
+                {
+                    _logger.LogWarning(processEx, "Could not get detailed process memory information");
+                }
+
+                _logger.LogDebug("Retrieved memory information for process {ProcessId}", memoryInfo.ProcessId);
+                return memoryInfo;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get memory information");
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets detailed information about an object in the current debugging context.
+    /// </summary>
+    /// <param name="objectName">The name of the object to inspect.</param>
+    /// <returns>Detailed information about the object.</returns>
+    public async Task<ObjectInfo> InspectObjectAsync(string objectName)
+    {
+        return await Task.Run(async () =>
+        {
+            _logger.LogDebug("Inspecting object: {ObjectName}", objectName);
+
+            try
+            {
+                var debugger = await GetActiveDebuggerAsync();
+                if (debugger == null)
+                {
+                    throw new InvalidOperationException("No active Visual Studio debugger found. Ensure Visual Studio is connected.");
+                }
+
+                // Check if debugging is paused (object inspection only available when paused)
+                if (debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+                {
+                    throw new InvalidOperationException("Debugger is not paused. Object inspection is only available when execution is paused.");
+                }
+
+                // Get the current stack frame for variable access
+                var currentThread = debugger.CurrentThread;
+                if (currentThread?.StackFrames?.Count > 0)
+                {
+                    var topFrame = currentThread.StackFrames.Item(1); // 1-based indexing
+                    
+                    // Try to find the object in locals first
+                    foreach (EnvDTE.Expression expression in topFrame.Locals)
+                    {
+                        if (expression.Name.Equals(objectName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return CreateObjectInfoFromExpression(expression, objectName);
+                        }
+                    }
+                    
+                    // If not found in locals, try arguments/parameters
+                    foreach (EnvDTE.Expression expression in topFrame.Arguments)
+                    {
+                        if (expression.Name.Equals(objectName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return CreateObjectInfoFromExpression(expression, objectName);
+                        }
+                    }
+                    
+                    // Note: StackFrame in EnvDTE doesn't have an Evaluate method
+                    // We can't evaluate the object name as an expression
+                    _logger.LogDebug("Expression evaluation not available due to missing StackFrame.Evaluate method");
+                    
+                    _logger.LogWarning("Object {ObjectName} not found in current context", objectName);
+                    throw new InvalidOperationException($"Object '{objectName}' not found in current debugging context.");
+                }
+                else
+                {
+                    throw new InvalidOperationException("No stack frames available for object inspection.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to inspect object: {ObjectName}", objectName);
+                throw;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Creates an ObjectInfo from an Expression.
+    /// </summary>
+    /// <param name="expression">The expression to convert.</param>
+    /// <param name="name">The name of the object.</param>
+    /// <returns>An ObjectInfo representing the expression.</returns>
+    private ObjectInfo CreateObjectInfoFromExpression(EnvDTE.Expression expression, string name)
+    {
+        var objectInfo = new ObjectInfo
+        {
+            Name = name,
+            Type = expression.Type ?? "unknown",
+            Value = expression.Value?.ToString() ?? "<null>",
+            Address = "Unknown",
+            Size = 0
+        };
+
+        try
+        {
+            // Try to get properties for complex objects
+            var properties = new List<ObjectProperty>();
+            
+            // Check if the expression has child expressions (properties)
+            if (expression.DataMembers != null)
+            {
+                foreach (EnvDTE.Expression member in expression.DataMembers)
+                {
+                    try
+                    {
+                        var property = new ObjectProperty
+                        {
+                            Name = member.Name,
+                            Type = member.Type ?? "unknown",
+                            Value = member.Value?.ToString() ?? "<null>",
+                            IsReadOnly = false // Default to false, as we can't easily determine this
+                        };
+                        properties.Add(property);
+                    }
+                    catch (Exception memberEx)
+                    {
+                        _logger.LogDebug(memberEx, "Could not extract property information for member: {MemberName}", member?.Name);
+                    }
+                }
+            }
+            
+            objectInfo.Properties = properties.ToArray();
+        }
+        catch (Exception propEx)
+        {
+            _logger.LogDebug(propEx, "Could not extract properties for object: {ObjectName}", name);
+        }
+
+        return objectInfo;
     }
 
     #region Helper Methods

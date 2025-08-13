@@ -121,7 +121,9 @@ public class VisualStudioMcpServer
                             new { name = "vs_set_breakpoint", description = "Set a breakpoint at the specified location" },
                             new { name = "vs_get_breakpoints", description = "Get all breakpoints in the current session" },
                             new { name = "vs_get_local_variables", description = "Get local variables in the current debugging context" },
-                            new { name = "vs_get_call_stack", description = "Get the current call stack" }
+                            new { name = "vs_get_call_stack", description = "Get the current call stack" },
+                            new { name = "vs_step_debug", description = "Step through code execution (into, over, out)" },
+                            new { name = "vs_evaluate_expression", description = "Evaluate an expression in the current debugging context" }
                         }
                     }
                 };
@@ -166,6 +168,8 @@ public class VisualStudioMcpServer
         _tools["vs_get_breakpoints"] = HandleGetBreakpointsAsync;
         _tools["vs_get_local_variables"] = HandleGetLocalVariablesAsync;
         _tools["vs_get_call_stack"] = HandleGetCallStackAsync;
+        _tools["vs_step_debug"] = HandleStepDebugAsync;
+        _tools["vs_evaluate_expression"] = HandleEvaluateExpressionAsync;
 
         _logger.LogInformation("Registered {Count} MCP tools", _tools.Count);
     }
@@ -588,6 +592,98 @@ public class VisualStudioMcpServer
             return McpToolResult.CreateError(
                 "Failed to get call stack",
                 "DEBUG_CALLSTACK_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleStepDebugAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_step_debug tool");
+
+            // Get the step type (into, over, out)
+            string stepType = "into"; // Default
+            if (arguments.TryGetProperty("type", out var typeElement))
+            {
+                stepType = typeElement.GetString() ?? "into";
+            }
+
+            DebugState debugState;
+            switch (stepType.ToLowerInvariant())
+            {
+                case "into":
+                    debugState = await _debugService.StepIntoAsync();
+                    break;
+                case "over":
+                    debugState = await _debugService.StepOverAsync();
+                    break;
+                case "out":
+                    debugState = await _debugService.StepOutAsync();
+                    break;
+                default:
+                    return McpToolResult.CreateError(
+                        "Invalid step type",
+                        "DEBUG_STEP_INVALID_TYPE",
+                        $"Step type '{stepType}' is not valid. Valid options are: into, over, out");
+            }
+
+            return McpToolResult.CreateSuccess(new
+            {
+                debugState = debugState,
+                stepType = stepType,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_step_debug tool");
+            return McpToolResult.CreateError(
+                "Failed to step debug",
+                "DEBUG_STEP_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleEvaluateExpressionAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_evaluate_expression tool");
+
+            // Get the expression to evaluate
+            if (!arguments.TryGetProperty("expression", out var expressionElement))
+            {
+                return McpToolResult.CreateError(
+                    "Missing expression parameter",
+                    "DEBUG_EVALUATE_MISSING_EXPRESSION",
+                    "The 'expression' parameter is required");
+            }
+
+            var expression = expressionElement.GetString();
+            if (string.IsNullOrWhiteSpace(expression))
+            {
+                return McpToolResult.CreateError(
+                    "Invalid expression parameter",
+                    "DEBUG_EVALUATE_INVALID_EXPRESSION",
+                    "The 'expression' parameter cannot be null or empty");
+            }
+
+            var result = await _debugService.EvaluateExpressionAsync(expression);
+
+            return McpToolResult.CreateSuccess(new
+            {
+                result = result,
+                expression = expression,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_evaluate_expression tool");
+            return McpToolResult.CreateError(
+                "Failed to evaluate expression",
+                "DEBUG_EVALUATE_FAILED",
                 ex.Message);
         }
     }
