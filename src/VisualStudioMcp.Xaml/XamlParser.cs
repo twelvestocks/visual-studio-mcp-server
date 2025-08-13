@@ -11,6 +11,7 @@ public class XamlParser
 {
     private readonly ILogger<XamlParser> _logger;
     private readonly Dictionary<string, XDocument> _documentCache;
+    private readonly Dictionary<string, DocumentIndex> _indexCache;
     private readonly object _cacheLock = new();
 
     /// <summary>
@@ -21,6 +22,7 @@ public class XamlParser
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _documentCache = new Dictionary<string, XDocument>();
+        _indexCache = new Dictionary<string, DocumentIndex>();
     }
 
     /// <summary>
@@ -114,6 +116,16 @@ public class XamlParser
                 return Array.Empty<XamlElement>();
             }
 
+            // Try to use indexed lookup first
+            var index = await GetDocumentIndexAsync(xamlFilePath).ConfigureAwait(false);
+            if (index != null && index.ElementsByName.TryGetValue(elementName, out var indexedElements))
+            {
+                _logger.LogDebug("Using indexed lookup for elements with name '{ElementName}': found {Count} elements", 
+                    elementName, indexedElements.Count);
+                return indexedElements.ToArray();
+            }
+
+            // Fallback to document parsing if index is not available
             var document = await LoadXamlDocumentAsync(xamlFilePath).ConfigureAwait(false);
             if (document?.Root == null)
             {
@@ -158,6 +170,16 @@ public class XamlParser
                 return Array.Empty<XamlElement>();
             }
 
+            // Try to use indexed lookup first
+            var index = await GetDocumentIndexAsync(xamlFilePath).ConfigureAwait(false);
+            if (index != null && index.ElementsByType.TryGetValue(elementType, out var indexedElements))
+            {
+                _logger.LogDebug("Using indexed lookup for elements of type '{ElementType}': found {Count} elements", 
+                    elementType, indexedElements.Count);
+                return indexedElements.ToArray();
+            }
+
+            // Fallback to document parsing if index is not available
             var document = await LoadXamlDocumentAsync(xamlFilePath).ConfigureAwait(false);
             if (document?.Root == null)
             {
@@ -187,24 +209,51 @@ public class XamlParser
     {
         lock (_cacheLock)
         {
-            if (_documentCache.Remove(xamlFilePath))
+            var docRemoved = _documentCache.Remove(xamlFilePath);
+            var indexRemoved = _indexCache.Remove(xamlFilePath);
+            
+            if (docRemoved || indexRemoved)
             {
-                _logger.LogDebug("Invalidated cache for XAML file: {FilePath}", xamlFilePath);
+                _logger.LogDebug("Invalidated cache for XAML file: {FilePath} (doc: {DocRemoved}, index: {IndexRemoved})", 
+                    xamlFilePath, docRemoved, indexRemoved);
             }
         }
     }
 
     /// <summary>
-    /// Clears all cached XAML documents.
+    /// Clears all cached XAML documents and indexes.
     /// </summary>
     public void ClearCache()
     {
         lock (_cacheLock)
         {
-            var count = _documentCache.Count;
+            var docCount = _documentCache.Count;
+            var indexCount = _indexCache.Count;
             _documentCache.Clear();
-            _logger.LogInformation("Cleared XAML document cache ({Count} documents)", count);
+            _indexCache.Clear();
+            _logger.LogInformation("Cleared XAML document cache ({DocCount} documents, {IndexCount} indexes)", 
+                docCount, indexCount);
         }
+    }
+
+    /// <summary>
+    /// Gets statistics about all cached indexes.
+    /// </summary>
+    public IndexStatistics[] GetIndexStatistics()
+    {
+        lock (_cacheLock)
+        {
+            return _indexCache.Values.Select(index => index.GetStatistics()).ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Gets index statistics for a specific file.
+    /// </summary>
+    public async Task<IndexStatistics?> GetIndexStatisticsAsync(string xamlFilePath)
+    {
+        var index = await GetDocumentIndexAsync(xamlFilePath).ConfigureAwait(false);
+        return index?.GetStatistics();
     }
 
     /// <summary>
@@ -387,4 +436,200 @@ public class XamlParser
             _logger.LogWarning(ex, "Error searching element by type: {ElementName}", element.Name.LocalName);
         }
     }
+
+    /// <summary>
+    /// Gets or creates a document index for fast lookups.
+    /// </summary>
+    private async Task<DocumentIndex?> GetDocumentIndexAsync(string xamlFilePath)
+    {
+        // Check cache first
+        lock (_cacheLock)
+        {
+            if (_indexCache.TryGetValue(xamlFilePath, out var cachedIndex))
+            {
+                _logger.LogDebug("Using cached index for XAML file: {FilePath}", xamlFilePath);
+                return cachedIndex;
+            }
+        }
+
+        try
+        {
+            // Load document if needed
+            var document = await LoadXamlDocumentAsync(xamlFilePath).ConfigureAwait(false);
+            if (document?.Root == null)
+            {
+                return null;
+            }
+
+            // Build index
+            var index = BuildDocumentIndex(document, xamlFilePath);
+
+            // Cache the index
+            lock (_cacheLock)
+            {
+                _indexCache[xamlFilePath] = index;
+                _logger.LogDebug("Built and cached index for XAML file: {FilePath} ({NameCount} names, {TypeCount} types)", 
+                    xamlFilePath, index.ElementsByName.Count, index.ElementsByType.Count);
+            }
+
+            return index;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error building document index for XAML file: {FilePath}", xamlFilePath);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds a document index for efficient element lookups.
+    /// </summary>
+    private DocumentIndex BuildDocumentIndex(XDocument document, string filePath)
+    {
+        var index = new DocumentIndex(filePath);
+        
+        if (document.Root != null)
+        {
+            BuildIndexRecursive(document.Root, index, null, 0);
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Recursively builds the document index from the XAML tree.
+    /// </summary>
+    private void BuildIndexRecursive(XElement element, DocumentIndex index, XamlElement? parent, int depth)
+    {
+        try
+        {
+            var xamlElement = CreateXamlElementFromXElement(element, parent, depth);
+            
+            // Index by name if element has a name
+            if (!string.IsNullOrEmpty(xamlElement.ElementName))
+            {
+                if (!index.ElementsByName.ContainsKey(xamlElement.ElementName))
+                {
+                    index.ElementsByName[xamlElement.ElementName] = new List<XamlElement>();
+                }
+                index.ElementsByName[xamlElement.ElementName].Add(xamlElement);
+            }
+
+            // Index by type
+            var elementType = xamlElement.ElementType;
+            if (!index.ElementsByType.ContainsKey(elementType))
+            {
+                index.ElementsByType[elementType] = new List<XamlElement>();
+            }
+            index.ElementsByType[elementType].Add(xamlElement);
+
+            // Add to all elements collection
+            index.AllElements.Add(xamlElement);
+
+            // Continue with child elements
+            foreach (var child in element.Elements())
+            {
+                BuildIndexRecursive(child, index, xamlElement, depth + 1);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error indexing element: {ElementName}", element.Name.LocalName);
+        }
+    }
+}
+
+/// <summary>
+/// Index structure for fast element lookups in a XAML document.
+/// </summary>
+internal class DocumentIndex
+{
+    /// <summary>
+    /// File path this index represents.
+    /// </summary>
+    public string FilePath { get; }
+
+    /// <summary>
+    /// Elements indexed by their name (x:Name or Name attribute).
+    /// </summary>
+    public Dictionary<string, List<XamlElement>> ElementsByName { get; }
+
+    /// <summary>
+    /// Elements indexed by their type (local name).
+    /// </summary>
+    public Dictionary<string, List<XamlElement>> ElementsByType { get; }
+
+    /// <summary>
+    /// All elements in the document.
+    /// </summary>
+    public List<XamlElement> AllElements { get; }
+
+    /// <summary>
+    /// When this index was created.
+    /// </summary>
+    public DateTime CreatedAt { get; }
+
+    /// <summary>
+    /// Initializes a new DocumentIndex.
+    /// </summary>
+    public DocumentIndex(string filePath)
+    {
+        FilePath = filePath;
+        ElementsByName = new Dictionary<string, List<XamlElement>>(StringComparer.OrdinalIgnoreCase);
+        ElementsByType = new Dictionary<string, List<XamlElement>>(StringComparer.OrdinalIgnoreCase);
+        AllElements = new List<XamlElement>();
+        CreatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Gets statistics about this index.
+    /// </summary>
+    public IndexStatistics GetStatistics()
+    {
+        return new IndexStatistics
+        {
+            FilePath = FilePath,
+            TotalElements = AllElements.Count,
+            NamedElements = ElementsByName.Values.Sum(list => list.Count),
+            UniqueElementTypes = ElementsByType.Count,
+            UniqueElementNames = ElementsByName.Count,
+            CreatedAt = CreatedAt
+        };
+    }
+}
+
+/// <summary>
+/// Statistics about a document index.
+/// </summary>
+public class IndexStatistics
+{
+    /// <summary>
+    /// File path this index represents.
+    /// </summary>
+    public string FilePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Total number of elements in the document.
+    /// </summary>
+    public int TotalElements { get; set; }
+
+    /// <summary>
+    /// Number of elements that have names.
+    /// </summary>
+    public int NamedElements { get; set; }
+
+    /// <summary>
+    /// Number of unique element types.
+    /// </summary>
+    public int UniqueElementTypes { get; set; }
+
+    /// <summary>
+    /// Number of unique element names.
+    /// </summary>
+    public int UniqueElementNames { get; set; }
+
+    /// <summary>
+    /// When this index was created.
+    /// </summary>
+    public DateTime CreatedAt { get; set; }
 }
