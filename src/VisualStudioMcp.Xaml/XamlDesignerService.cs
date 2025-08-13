@@ -17,9 +17,9 @@ public class XamlDesignerService : IXamlDesignerService
     private readonly ILogger<XamlDesignerService> _logger;
     private readonly IVisualStudioService _vsService;
 
-    // Windows API for window enumeration
+    // Windows API for window enumeration with nullable parameter support
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindowEx(IntPtr parentHwnd, IntPtr childAfterHwnd, string className, string windowText);
+    private static extern IntPtr FindWindowEx(IntPtr parentHwnd, IntPtr childAfterHwnd, string? className, string? windowText);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
@@ -30,6 +30,11 @@ public class XamlDesignerService : IXamlDesignerService
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+    /// <summary>
+    /// Initializes a new instance of the XamlDesignerService class.
+    /// </summary>
+    /// <param name="logger">Logger for diagnostic and debugging information.</param>
+    /// <param name="vsService">Visual Studio service for COM automation.</param>
     public XamlDesignerService(ILogger<XamlDesignerService> logger, IVisualStudioService vsService)
     {
         _logger = logger;
@@ -45,37 +50,44 @@ public class XamlDesignerService : IXamlDesignerService
     {
         _logger.LogInformation("Finding XAML designer windows for VS process: {ProcessId}", vsProcessId);
 
-        return await Task.Run(() =>
+        try
         {
+            // Get running VS instances to find the correct DTE object
+            var instances = await _vsService.GetRunningInstancesAsync().ConfigureAwait(false);
+            var targetInstance = instances.FirstOrDefault(i => i.ProcessId == vsProcessId);
+
+            if (targetInstance == null)
+            {
+                _logger.LogWarning("Visual Studio instance with PID {ProcessId} not found", vsProcessId);
+                return Array.Empty<XamlDesignerWindow>();
+            }
+
+            // Connect to the VS instance to get document information
+            var vsInstance = await _vsService.ConnectToInstanceAsync(vsProcessId).ConfigureAwait(false);
+            
             var designerWindows = new List<XamlDesignerWindow>();
-
-            try
+            
+            // Find active XAML documents and their designer windows (run in background thread)
+            await Task.Run(() =>
             {
-                // Get running VS instances to find the correct DTE object
-                var instances = _vsService.GetRunningInstancesAsync().Result;
-                var targetInstance = instances.FirstOrDefault(i => i.ProcessId == vsProcessId);
-
-                if (targetInstance == null)
+                try
                 {
-                    _logger.LogWarning("Visual Studio instance with PID {ProcessId} not found", vsProcessId);
-                    return designerWindows.ToArray();
+                    designerWindows.AddRange(FindDesignerWindowsForInstance(vsProcessId));
+                    _logger.LogInformation("Found {Count} XAML designer windows", designerWindows.Count);
                 }
-
-                // Connect to the VS instance to get document information
-                var vsInstance = _vsService.ConnectToInstanceAsync(vsProcessId).Result;
-                
-                // Find active XAML documents and their designer windows
-                designerWindows.AddRange(FindDesignerWindowsForInstance(vsProcessId));
-
-                _logger.LogInformation("Found {Count} XAML designer windows", designerWindows.Count);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error finding XAML designer windows for process {ProcessId}", vsProcessId);
-            }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error finding designer windows for process {ProcessId}", vsProcessId);
+                }
+            }).ConfigureAwait(false);
 
             return designerWindows.ToArray();
-        });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error finding XAML designer windows for process {ProcessId}", vsProcessId);
+            return Array.Empty<XamlDesignerWindow>();
+        }
     }
 
     /// <summary>
@@ -272,22 +284,26 @@ public class XamlDesignerService : IXamlDesignerService
     }
 
     /// <summary>
-    /// Gets the DTE instance for the specified XAML file.
+    /// Gets the DTE instance for the specified XAML file asynchronously with safe COM management.
     /// </summary>
-    private DTE? GetDteForXamlFile(string xamlFilePath)
+    private async Task<SafeDteWrapper?> GetDteForXamlFileAsync(string xamlFilePath)
     {
         try
         {
-            var instances = _vsService.GetRunningInstancesAsync().Result;
+            var instances = await _vsService.GetRunningInstancesAsync().ConfigureAwait(false);
             
             foreach (var instance in instances)
             {
                 // Connect to instance and check if it has the XAML file open
-                var vsInstance = _vsService.ConnectToInstanceAsync(instance.ProcessId).Result;
+                var vsInstance = await _vsService.ConnectToInstanceAsync(instance.ProcessId).ConfigureAwait(false);
                 
                 // For now, just return the first available DTE instance
                 // In a full implementation, we'd check which instance has the file open
-                return GetDteFromInstance(instance.ProcessId);
+                var dteWrapper = await Task.Run(() => GetDteFromInstance(instance.ProcessId)).ConfigureAwait(false);
+                if (dteWrapper != null)
+                {
+                    return dteWrapper;
+                }
             }
 
             return null;
@@ -300,33 +316,47 @@ public class XamlDesignerService : IXamlDesignerService
     }
 
     /// <summary>
-    /// Gets DTE object from a Visual Studio instance.
+    /// Gets DTE object from a Visual Studio instance with safe COM management.
     /// </summary>
-    private DTE? GetDteFromInstance(int processId)
+    private SafeDteWrapper? GetDteFromInstance(int processId)
     {
-        // This is a simplified version - would need proper COM ROT enumeration
-        // For now, just indicate the pattern
-        _logger.LogDebug("Getting DTE for process {ProcessId}", processId);
-        return null; // Placeholder - would return actual DTE object
+        try
+        {
+            // This is a simplified version - would need proper COM ROT enumeration
+            // For now, just indicate the pattern with proper COM lifecycle management
+            _logger.LogDebug("Getting DTE for process {ProcessId}", processId);
+            
+            // In a full implementation, this would:
+            // 1. Use GetRunningObjectTable to enumerate ROT
+            // 2. Find DTE object for the specified process ID
+            // 3. Return it wrapped in SafeDteWrapper
+            
+            return null; // Placeholder - would return actual SafeDteWrapper
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting DTE for process {ProcessId}", processId);
+            return null;
+        }
     }
 
     /// <summary>
-    /// Extracts visual tree elements from XAML using DTE automation.
+    /// Extracts visual tree elements from XAML using DTE automation with safe COM management.
     /// </summary>
-    private XamlElement[] ExtractVisualTreeFromXaml(DTE? dte, string xamlFilePath)
+    private XamlElement[] ExtractVisualTreeFromXaml(SafeDteWrapper? dteWrapper, string xamlFilePath)
     {
         var elements = new List<XamlElement>();
 
         try
         {
             // Method 1: Parse XAML file directly
-            if (File.Exists(xamlFilePath))
+            if (IsXamlFileAccessible(xamlFilePath))
             {
                 elements.AddRange(ParseXamlFileDirectly(xamlFilePath));
             }
 
             // Method 2: Use Visual Studio designer APIs (when available)
-            elements.AddRange(ExtractFromDesignerApi(dte, xamlFilePath));
+            elements.AddRange(ExtractFromDesignerApi(dteWrapper, xamlFilePath));
 
             _logger.LogInformation("Extracted {Count} XAML elements from {FilePath}", elements.Count, xamlFilePath);
         }
@@ -347,8 +377,7 @@ public class XamlDesignerService : IXamlDesignerService
 
         try
         {
-            var xamlContent = File.ReadAllText(xamlFilePath);
-            var doc = XDocument.Parse(xamlContent);
+            var doc = SecureXmlHelper.LoadXamlFileSecurely(xamlFilePath);
 
             if (doc.Root != null)
             {
@@ -407,27 +436,36 @@ public class XamlDesignerService : IXamlDesignerService
     }
 
     /// <summary>
-    /// Extracts elements from Visual Studio designer APIs (placeholder).
+    /// Extracts elements from Visual Studio designer APIs with safe COM management (placeholder).
     /// </summary>
-    private List<XamlElement> ExtractFromDesignerApi(DTE? dte, string xamlFilePath)
+    private List<XamlElement> ExtractFromDesignerApi(SafeDteWrapper? dteWrapper, string xamlFilePath)
     {
         var elements = new List<XamlElement>();
 
         try
         {
-            if (dte == null)
+            if (dteWrapper == null || dteWrapper.IsDisposed)
             {
-                _logger.LogDebug("DTE is null, skipping designer API extraction");
+                _logger.LogDebug("DTE wrapper is null or disposed, skipping designer API extraction");
                 return elements;
             }
 
-            // This would use Visual Studio's XAML designer APIs
-            // For now, this is a placeholder since the exact APIs depend on VS version
-            _logger.LogDebug("Designer API extraction not yet implemented for {FilePath}", xamlFilePath);
+            // Use the safe wrapper to access DTE functionality
+            dteWrapper.Execute(dte =>
+            {
+                // This would use Visual Studio's XAML designer APIs
+                // For now, this is a placeholder since the exact APIs depend on VS version
+                _logger.LogDebug("Designer API extraction not yet implemented for {FilePath}", xamlFilePath);
+            });
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error extracting from designer API: {FilePath}", xamlFilePath);
+        }
+        finally
+        {
+            // The SafeDteWrapper will handle COM object cleanup automatically
+            // No need for manual Marshal.ReleaseComObject here
         }
 
         return elements;
@@ -447,19 +485,16 @@ public class XamlDesignerService : IXamlDesignerService
     {
         _logger.LogInformation("Getting visual tree for: {XamlFile}", xamlFilePath);
         
-        return await Task.Run(() =>
+        try
         {
-            try
-            {
-                var dte = GetDteForXamlFile(xamlFilePath);
-                return ExtractVisualTreeFromXaml(dte, xamlFilePath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting visual tree for {XamlFile}", xamlFilePath);
-                return Array.Empty<XamlElement>();
-            }
-        });
+            using var dteWrapper = await GetDteForXamlFileAsync(xamlFilePath).ConfigureAwait(false);
+            return await Task.Run(() => ExtractVisualTreeFromXaml(dteWrapper, xamlFilePath)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting visual tree for {XamlFile}", xamlFilePath);
+            return Array.Empty<XamlElement>();
+        }
     }
 
     public async Task<XamlProperty[]> GetElementPropertiesAsync(string elementPath)
@@ -593,39 +628,36 @@ public class XamlDesignerService : IXamlDesignerService
         _logger.LogInformation("Modifying property {Property} of element {ElementPath} to {Value}", 
             property, elementPath, value);
         
-        await Task.Run(() =>
+        try
         {
-            try
-            {
-                ModifyElementPropertyInternal(elementPath, property, value);
-                _logger.LogInformation("Successfully modified property {Property} of element {ElementPath}", property, elementPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error modifying property {Property} of element {ElementPath}", property, elementPath);
-                throw;
-            }
-        });
+            await ModifyElementPropertyInternalAsync(elementPath, property, value).ConfigureAwait(false);
+            _logger.LogInformation("Successfully modified property {Property} of element {ElementPath}", property, elementPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error modifying property {Property} of element {ElementPath}", property, elementPath);
+            throw;
+        }
     }
 
     /// <summary>
-    /// Internal method to modify an element property.
+    /// Internal method to modify an element property asynchronously.
     /// </summary>
-    private void ModifyElementPropertyInternal(string elementPath, string property, object value)
+    private async Task ModifyElementPropertyInternalAsync(string elementPath, string property, object value)
     {
         try
         {
             // Method 1: Direct XAML file modification
-            var xamlFilePath = FindXamlFileForElement(elementPath);
-            if (!string.IsNullOrEmpty(xamlFilePath) && File.Exists(xamlFilePath))
+            var xamlFilePath = await FindXamlFileForElementAsync(elementPath).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(xamlFilePath) && IsXamlFileAccessible(xamlFilePath))
             {
-                ModifyPropertyInXamlFile(xamlFilePath, elementPath, property, value);
+                await Task.Run(() => ModifyPropertyInXamlFile(xamlFilePath, elementPath, property, value)).ConfigureAwait(false);
                 _logger.LogDebug("Modified property via direct XAML file modification");
                 return;
             }
 
             // Method 2: Visual Studio designer API (when available)
-            ModifyPropertyViaDesignerApi(elementPath, property, value);
+            await Task.Run(() => ModifyPropertyViaDesignerApi(elementPath, property, value)).ConfigureAwait(false);
             _logger.LogDebug("Modified property via VS designer API");
         }
         catch (Exception ex)
@@ -636,15 +668,15 @@ public class XamlDesignerService : IXamlDesignerService
     }
 
     /// <summary>
-    /// Finds the XAML file that contains the specified element.
+    /// Finds the XAML file that contains the specified element asynchronously.
     /// </summary>
-    private string FindXamlFileForElement(string elementPath)
+    private async Task<string> FindXamlFileForElementAsync(string elementPath)
     {
         try
         {
             // For now, this is a simplified implementation
             // In a full implementation, we would track which file each element came from
-            var instances = _vsService.GetRunningInstancesAsync().Result;
+            var instances = await _vsService.GetRunningInstancesAsync().ConfigureAwait(false);
             
             foreach (var instance in instances)
             {
@@ -698,11 +730,10 @@ public class XamlDesignerService : IXamlDesignerService
     {
         try
         {
-            if (!File.Exists(xamlFilePath))
+            if (!IsXamlFileAccessible(xamlFilePath))
                 return false;
 
-            var xamlContent = File.ReadAllText(xamlFilePath);
-            var doc = XDocument.Parse(xamlContent);
+            var doc = SecureXmlHelper.LoadXamlFileSecurely(xamlFilePath);
 
             if (doc.Root == null)
                 return false;
@@ -731,8 +762,7 @@ public class XamlDesignerService : IXamlDesignerService
     {
         try
         {
-            var xamlContent = File.ReadAllText(xamlFilePath);
-            var doc = XDocument.Parse(xamlContent);
+            var doc = SecureXmlHelper.LoadXamlFileSecurely(xamlFilePath);
 
             if (doc.Root == null)
             {
@@ -769,8 +799,9 @@ public class XamlDesignerService : IXamlDesignerService
             // Set or update the attribute
             targetElement.SetAttributeValue(attributeName, stringValue);
 
-            // Save the modified XAML file
-            File.WriteAllText(xamlFilePath, doc.ToString());
+            // Save the modified XAML file using secure path validation
+            var safePath = SecureXmlHelper.ValidateAndNormalizePath(xamlFilePath);
+            File.WriteAllText(safePath, doc.ToString());
             
             _logger.LogInformation("Successfully modified {Property} to {Value} in XAML file {FilePath}", 
                 property, stringValue, xamlFilePath);
@@ -868,14 +899,13 @@ public class XamlDesignerService : IXamlDesignerService
 
         try
         {
-            if (!File.Exists(xamlFilePath))
+            if (!IsXamlFileAccessible(xamlFilePath))
             {
-                _logger.LogWarning("XAML file does not exist: {FilePath}", xamlFilePath);
+                _logger.LogWarning("XAML file does not exist or is not accessible: {FilePath}", xamlFilePath);
                 return bindings.ToArray();
             }
 
-            var xamlContent = File.ReadAllText(xamlFilePath);
-            var doc = XDocument.Parse(xamlContent);
+            var doc = SecureXmlHelper.LoadXamlFileSecurely(xamlFilePath);
 
             if (doc.Root == null)
             {
@@ -918,7 +948,7 @@ public class XamlDesignerService : IXamlDesignerService
                     bindingInfo.ElementName = elementName ?? $"[{elementType}]";
                     bindingInfo.ElementType = elementType;
                     bindingInfo.PropertyName = attribute.Name.LocalName;
-                    bindingInfo.LineNumber = ((IXmlLineInfo)element)?.LineNumber ?? 0;
+                    bindingInfo.LineNumber = element is IXmlLineInfo lineInfo ? lineInfo.LineNumber : 0;
 
                     bindings.Add(bindingInfo);
                 }
@@ -937,18 +967,11 @@ public class XamlDesignerService : IXamlDesignerService
     }
 
     /// <summary>
-    /// Checks if a value contains a binding expression.
+    /// Checks if a value contains a binding expression using compiled regex for performance.
     /// </summary>
     private bool ContainsBindingExpression(string value)
     {
-        if (string.IsNullOrEmpty(value))
-            return false;
-
-        return value.Contains("{Binding") || 
-               value.Contains("{StaticResource") || 
-               value.Contains("{DynamicResource") ||
-               value.Contains("{x:Bind") ||
-               value.Contains("{RelativeSource");
+        return XamlBindingRegexPatterns.ContainsBinding(value);
     }
 
     /// <summary>
@@ -966,7 +989,7 @@ public class XamlDesignerService : IXamlDesignerService
             if (expression.Contains("{StaticResource"))
             {
                 bindingInfo.IsResourceBinding = true;
-                var match = Regex.Match(expression, @"\{StaticResource\s+([^}]+)\}");
+                var match = XamlBindingRegexPatterns.StaticResourcePattern.Match(expression);
                 if (match.Success)
                 {
                     bindingInfo.BindingPath = match.Groups[1].Value.Trim();
@@ -975,7 +998,7 @@ public class XamlDesignerService : IXamlDesignerService
             else if (expression.Contains("{DynamicResource"))
             {
                 bindingInfo.IsDynamicResourceBinding = true;
-                var match = Regex.Match(expression, @"\{DynamicResource\s+([^}]+)\}");
+                var match = XamlBindingRegexPatterns.DynamicResourcePattern.Match(expression);
                 if (match.Success)
                 {
                     bindingInfo.BindingPath = match.Groups[1].Value.Trim();
@@ -1002,8 +1025,8 @@ public class XamlDesignerService : IXamlDesignerService
     {
         try
         {
-            // Extract Path
-            var pathMatch = Regex.Match(expression, @"Path\s*=\s*([^,}]+)");
+            // Extract Path using compiled regex for performance
+            var pathMatch = XamlBindingRegexPatterns.PathPattern.Match(expression);
             if (pathMatch.Success)
             {
                 bindingInfo.BindingPath = pathMatch.Groups[1].Value.Trim();
@@ -1011,22 +1034,22 @@ public class XamlDesignerService : IXamlDesignerService
             else
             {
                 // Check for simplified binding syntax like {Binding PropertyName}
-                var simpleMatch = Regex.Match(expression, @"\{(?:x:)?Binding\s+([^,}]+)");
+                var simpleMatch = XamlBindingRegexPatterns.SimpleBindingPattern.Match(expression);
                 if (simpleMatch.Success && !simpleMatch.Groups[1].Value.Contains("="))
                 {
                     bindingInfo.BindingPath = simpleMatch.Groups[1].Value.Trim();
                 }
             }
 
-            // Extract Mode
-            var modeMatch = Regex.Match(expression, @"Mode\s*=\s*([^,}]+)");
+            // Extract Mode using compiled regex for performance
+            var modeMatch = XamlBindingRegexPatterns.ModePattern.Match(expression);
             if (modeMatch.Success)
             {
                 bindingInfo.BindingMode = modeMatch.Groups[1].Value.Trim();
             }
 
-            // Extract Converter
-            var converterMatch = Regex.Match(expression, @"Converter\s*=\s*\{StaticResource\s+([^}]+)\}");
+            // Extract Converter using compiled regex for performance
+            var converterMatch = XamlBindingRegexPatterns.ConverterPattern.Match(expression);
             if (converterMatch.Success)
             {
                 bindingInfo.Converter = converterMatch.Groups[1].Value.Trim();
@@ -1137,5 +1160,39 @@ public class XamlDesignerService : IXamlDesignerService
         };
 
         return twoWayProperties.Contains(propertyName);
+    }
+
+    /// <summary>
+    /// Safely checks if a XAML file exists and is accessible with security validation.
+    /// </summary>
+    private bool IsXamlFileAccessible(string xamlFilePath)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(xamlFilePath))
+                return false;
+
+            // Validate path for security
+            if (!SecureXmlHelper.IsFilePathSafe(xamlFilePath))
+            {
+                _logger.LogWarning("XAML file path is not safe: {FilePath}", xamlFilePath);
+                return false;
+            }
+
+            // Ensure it's a XAML file by extension
+            var extension = Path.GetExtension(xamlFilePath).ToLowerInvariant();
+            if (extension != ".xaml")
+            {
+                _logger.LogWarning("File is not a XAML file: {FilePath}", xamlFilePath);
+                return false;
+            }
+
+            return File.Exists(xamlFilePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error checking XAML file accessibility: {FilePath}", xamlFilePath);
+            return false;
+        }
     }
 }

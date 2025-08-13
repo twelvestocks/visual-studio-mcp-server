@@ -12,57 +12,7 @@ public class ImagingService : IImagingService
 {
     private readonly ILogger<ImagingService> _logger;
 
-    // Windows API declarations for screenshot capture
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetWindowDC(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDC(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateCompatibleDC(IntPtr hDC);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateCompatibleBitmap(IntPtr hDC, int nWidth, int nHeight);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hGDIObj);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool BitBlt(IntPtr hDestDC, int x, int y, int nWidth, int nHeight, IntPtr hSrcDC, int xSrc, int ySrc, uint dwRop);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr hObject);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteDC(IntPtr hDC);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr FindWindowEx(IntPtr parentHwnd, IntPtr childAfterHwnd, string className, string windowText);
-
-    // Constants for BitBlt operation
-    private const uint SRCCOPY = 0x00CC0020;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
+    // Note: Windows API declarations moved to GdiNativeMethods for security and maintainability
 
     public ImagingService(ILogger<ImagingService> logger)
     {
@@ -158,17 +108,22 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Finds a window by its title.
+    /// Finds a window by its title with security validation.
     /// </summary>
     private IntPtr FindWindowByTitle(string windowTitle)
     {
         try
         {
             // First try direct window search
-            var hwnd = FindWindow(null, windowTitle);
-            if (hwnd != IntPtr.Zero && IsWindowVisible(hwnd))
+            var hwnd = GdiNativeMethods.FindWindow(null, windowTitle);
+            if (hwnd != IntPtr.Zero && GdiNativeMethods.IsWindowVisible(hwnd))
             {
-                return hwnd;
+                // Validate window ownership for security
+                if (ValidateWindowOwnership(hwnd))
+                {
+                    return hwnd;
+                }
+                _logger.LogWarning("Window found but ownership validation failed: {WindowTitle}", windowTitle);
             }
 
             // If not found, search through all windows for partial matches
@@ -192,7 +147,7 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Finds the Visual Studio main window.
+    /// Finds the Visual Studio main window with security validation.
     /// </summary>
     private IntPtr FindVisualStudioMainWindow()
     {
@@ -203,10 +158,15 @@ public class ImagingService : IImagingService
 
             foreach (var className in vsClassNames)
             {
-                var hwnd = FindWindow(className, null);
-                if (hwnd != IntPtr.Zero && IsWindowVisible(hwnd))
+                var hwnd = GdiNativeMethods.FindWindow(className, null);
+                if (hwnd != IntPtr.Zero && GdiNativeMethods.IsWindowVisible(hwnd))
                 {
-                    return hwnd;
+                    // Validate window ownership for security
+                    if (ValidateWindowOwnership(hwnd))
+                    {
+                        return hwnd;
+                    }
+                    _logger.LogWarning("Visual Studio window found but ownership validation failed for class: {ClassName}", className);
                 }
             }
 
@@ -221,20 +181,28 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Captures a window by its handle.
+    /// Captures a window by its handle using safe GDI resource management.
     /// </summary>
     private ImageCapture CaptureWindowByHandle(IntPtr windowHandle)
     {
         try
         {
-            if (!GetWindowRect(windowHandle, out var rect))
+            // Validate window handle ownership for security
+            if (!ValidateWindowOwnership(windowHandle))
             {
+                _logger.LogWarning("Window handle validation failed for security reasons: {Handle}", windowHandle);
+                return CreateEmptyCapture();
+            }
+
+            if (!GdiNativeMethods.GetWindowRect(windowHandle, out var rect))
+            {
+                GdiNativeMethods.ThrowIfError("GetWindowRect");
                 _logger.LogWarning("Failed to get window rectangle for handle: {Handle}", windowHandle);
                 return CreateEmptyCapture();
             }
 
-            var width = rect.Right - rect.Left;
-            var height = rect.Bottom - rect.Top;
+            var width = rect.Width;
+            var height = rect.Height;
 
             if (width <= 0 || height <= 0)
             {
@@ -242,21 +210,14 @@ public class ImagingService : IImagingService
                 return CreateEmptyCapture();
             }
 
-            var windowDC = GetWindowDC(windowHandle);
-            if (windowDC == IntPtr.Zero)
+            using var windowDC = SafeDeviceContext.GetWindowDC(windowHandle);
+            if (windowDC == null)
             {
                 _logger.LogWarning("Failed to get window DC for handle: {Handle}", windowHandle);
                 return CreateEmptyCapture();
             }
 
-            try
-            {
-                return CaptureFromDC(windowDC, 0, 0, width, height);
-            }
-            finally
-            {
-                ReleaseDC(windowHandle, windowDC);
-            }
+            return CaptureFromDCSecurely(windowDC.Handle, 0, 0, width, height);
         }
         catch (Exception ex)
         {
@@ -266,27 +227,20 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Captures a screen region.
+    /// Captures a screen region using safe GDI resource management.
     /// </summary>
     private ImageCapture CaptureScreenRegion(int x, int y, int width, int height)
     {
         try
         {
-            var screenDC = GetDC(IntPtr.Zero);
-            if (screenDC == IntPtr.Zero)
+            using var screenDC = SafeDeviceContext.GetScreenDC();
+            if (screenDC == null)
             {
                 _logger.LogWarning("Failed to get screen DC");
                 return CreateEmptyCapture();
             }
 
-            try
-            {
-                return CaptureFromDC(screenDC, x, y, width, height);
-            }
-            finally
-            {
-                ReleaseDC(IntPtr.Zero, screenDC);
-            }
+            return CaptureFromDCSecurely(screenDC.Handle, x, y, width, height);
         }
         catch (Exception ex)
         {
@@ -296,23 +250,39 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Captures from a device context.
+    /// Captures from a device context using RAII pattern for guaranteed resource cleanup.
     /// </summary>
-    private ImageCapture CaptureFromDC(IntPtr sourceDC, int x, int y, int width, int height)
+    private ImageCapture CaptureFromDCSecurely(IntPtr sourceDC, int x, int y, int width, int height)
     {
-        var memoryDC = IntPtr.Zero;
-        var bitmap = IntPtr.Zero;
-        var oldBitmap = IntPtr.Zero;
-
         try
         {
-            memoryDC = CreateCompatibleDC(sourceDC);
-            bitmap = CreateCompatibleBitmap(sourceDC, width, height);
-            oldBitmap = SelectObject(memoryDC, bitmap);
+            using var memoryDC = SafeMemoryDC.CreateCompatibleDC(sourceDC);
+            if (memoryDC == null)
+            {
+                _logger.LogError("Failed to create compatible memory DC");
+                return CreateEmptyCapture();
+            }
 
-            BitBlt(memoryDC, 0, 0, width, height, sourceDC, x, y, SRCCOPY);
+            using var bitmap = SafeBitmap.CreateCompatibleBitmap(sourceDC, width, height);
+            if (bitmap == null)
+            {
+                _logger.LogError("Failed to create compatible bitmap {Width}x{Height}", width, height);
+                return CreateEmptyCapture();
+            }
 
-            var bmp = Image.FromHbitmap(bitmap);
+            // Select bitmap into memory DC
+            memoryDC.SelectBitmap(bitmap.Handle);
+
+            // Perform the bit block transfer
+            if (!GdiNativeMethods.BitBlt(memoryDC.Handle, 0, 0, width, height, sourceDC, x, y, GdiNativeMethods.SRCCOPY))
+            {
+                GdiNativeMethods.ThrowIfError("BitBlt");
+                _logger.LogError("BitBlt operation failed");
+                return CreateEmptyCapture();
+            }
+
+            // Convert to managed image and then to byte array
+            using var bmp = Image.FromHbitmap(bitmap.Handle);
             var imageData = ConvertImageToByteArray(bmp, ImageFormat.Png);
 
             var capture = new ImageCapture
@@ -324,22 +294,18 @@ public class ImagingService : IImagingService
                 CaptureTime = DateTime.UtcNow
             };
 
-            capture.Metadata["CaptureMethod"] = "GDI+";
+            capture.Metadata["CaptureMethod"] = "GDI+ (Secure)";
             capture.Metadata["SourceDC"] = sourceDC.ToString();
+            capture.Metadata["ResourcesAutoDisposed"] = "True";
             
-            bmp.Dispose();
-
             return capture;
         }
-        finally
+        catch (Exception ex)
         {
-            if (oldBitmap != IntPtr.Zero)
-                SelectObject(memoryDC, oldBitmap);
-            if (bitmap != IntPtr.Zero)
-                DeleteObject(bitmap);
-            if (memoryDC != IntPtr.Zero)
-                DeleteDC(memoryDC);
+            _logger.LogError(ex, "Error in secure DC capture");
+            return CreateEmptyCapture();
         }
+        // Note: All GDI resources are automatically disposed by RAII wrappers
     }
 
     /// <summary>
@@ -368,7 +334,7 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Saves a capture to a file.
+    /// Saves a capture to a file with path validation.
     /// </summary>
     private void SaveCaptureToFile(ImageCapture capture, string filePath)
     {
@@ -379,20 +345,103 @@ public class ImagingService : IImagingService
                 throw new InvalidOperationException("Cannot save empty image capture");
             }
 
-            var directory = Path.GetDirectoryName(filePath);
+            // Validate file path for security
+            var safePath = ValidateFilePath(filePath);
+
+            var directory = Path.GetDirectoryName(safePath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
 
-            File.WriteAllBytes(filePath, capture.ImageData);
+            File.WriteAllBytes(safePath, capture.ImageData);
 
-            _logger.LogDebug("Saved {Bytes} bytes to {FilePath}", capture.ImageData.Length, filePath);
+            _logger.LogDebug("Saved {Bytes} bytes to {FilePath}", capture.ImageData.Length, safePath);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error saving capture to file: {FilePath}", filePath);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Validates window ownership to prevent unauthorized access to other applications' windows.
+    /// </summary>
+    private bool ValidateWindowOwnership(IntPtr hwnd)
+    {
+        try
+        {
+            if (hwnd == IntPtr.Zero)
+                return false;
+
+            // Get the process ID that owns this window
+            GdiNativeMethods.GetWindowThreadProcessId(hwnd, out var windowProcessId);
+            
+            // Get current process ID
+            var currentProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
+            
+            // For now, allow all Visual Studio processes and the current process
+            // In a more restrictive implementation, we would maintain a whitelist
+            using var windowProcess = System.Diagnostics.Process.GetProcessById((int)windowProcessId);
+            var processName = windowProcess.ProcessName.ToLowerInvariant();
+            
+            // Allow Visual Studio processes and the current process
+            var allowedProcesses = new[] { "devenv", "visualstudio", "code" };
+            
+            return windowProcessId == currentProcessId || allowedProcesses.Any(p => processName.Contains(p));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error validating window ownership for handle: {Handle}", hwnd);
+            return false; // Fail secure - if we can't validate, deny access
+        }
+    }
+
+    /// <summary>
+    /// Validates and normalizes file path for safe file operations.
+    /// </summary>
+    private string ValidateFilePath(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+        {
+            throw new ArgumentException("File path cannot be null or empty", nameof(filePath));
+        }
+
+        try
+        {
+            // Get the full path to resolve any relative components
+            var fullPath = Path.GetFullPath(filePath);
+            
+            // Basic security checks
+            if (fullPath.Contains("..") || fullPath.Contains("~"))
+            {
+                throw new UnauthorizedAccessException("Path traversal attempts are not allowed");
+            }
+            
+            // Ensure we're not trying to write to system directories
+            var systemPaths = new[] 
+            { 
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+            };
+            
+            foreach (var systemPath in systemPaths.Where(p => !string.IsNullOrEmpty(p)))
+            {
+                if (fullPath.StartsWith(systemPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new UnauthorizedAccessException($"Writing to system directory is not allowed: {systemPath}");
+                }
+            }
+            
+            return fullPath;
+        }
+        catch (Exception ex) when (!(ex is UnauthorizedAccessException || ex is ArgumentException))
+        {
+            _logger.LogWarning(ex, "Error validating file path: {FilePath}", filePath);
+            throw new ArgumentException($"Invalid file path: {filePath}", nameof(filePath), ex);
         }
     }
 }
