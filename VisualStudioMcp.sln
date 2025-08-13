@@ -24,6 +24,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "VisualStudioMcp.Xaml.Tests"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "VisualStudioMcp.Integration.Tests", "tests\VisualStudioMcp.Integration.Tests\VisualStudioMcp.Integration.Tests.csproj", "{A3B4C5D6-7E8F-9A0B-1C2D-3E4F5A6B7C8D}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "VisualStudioMcp.Debug.Tests", "tests\VisualStudioMcp.Debug.Tests\VisualStudioMcp.Debug.Tests.csproj", "{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -66,6 +68,10 @@ Global
 		{A3B4C5D6-7E8F-9A0B-1C2D-3E4F5A6B7C8D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A3B4C5D6-7E8F-9A0B-1C2D-3E4F5A6B7C8D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A3B4C5D6-7E8F-9A0B-1C2D-3E4F5A6B7C8D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -80,6 +86,7 @@ Global
 		{E1F2A3B4-5C6D-7E8F-9A0B-1C2D3E4F5A6B} = {2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E}
 		{F2A3B4C5-6D7E-8F9A-0B1C-2D3E4F5A6B7C} = {2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E}
 		{A3B4C5D6-7E8F-9A0B-1C2D-3E4F5A6B7C8D} = {2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E}
+		{B4C5D6E7-8F9A-0B1C-2D3E-4F5A6B7C8D9E} = {2B3C4D5E-6F7A-8B9C-0D1E-2F3A4B5C6D7E}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {12345678-1234-1234-1234-123456789ABC}
