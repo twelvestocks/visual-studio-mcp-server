@@ -26,33 +26,105 @@ public interface IXamlDesignerService
     Task<bool> ActivateDesignerWindowAsync(XamlDesignerWindow designerWindow);
 
     /// <summary>
-    /// Captures a screenshot of the XAML designer surface.
+    /// Extracts the visual tree elements from a XAML file.
     /// </summary>
-    /// <param name="xamlFilePath">The path to the XAML file being designed.</param>
-    /// <returns>The capture result with image data and metadata.</returns>
-    Task<XamlDesignerCapture> CaptureDesignerAsync(string xamlFilePath);
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <returns>Array of visual tree elements.</returns>
+    Task<XamlElement[]> ExtractVisualTreeAsync(string xamlFilePath);
 
     /// <summary>
-    /// Gets the visual tree of elements in the XAML designer.
+    /// Modifies a property on elements with the specified name in a XAML file.
     /// </summary>
-    /// <param name="xamlFilePath">The path to the XAML file.</param>
-    /// <returns>Array of XAML elements in the visual tree.</returns>
-    Task<XamlElement[]> GetVisualTreeAsync(string xamlFilePath);
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementName">Name of the element to modify.</param>
+    /// <param name="propertyName">Name of the property to modify.</param>
+    /// <param name="propertyValue">New value for the property.</param>
+    /// <returns>True if successfully modified, false otherwise.</returns>
+    Task<bool> ModifyElementPropertyAsync(string xamlFilePath, string elementName, string propertyName, string propertyValue);
 
     /// <summary>
-    /// Gets properties of a specific XAML element.
+    /// Searches for elements by name within a XAML file.
     /// </summary>
-    /// <param name="elementPath">The path to the element in the visual tree.</param>
-    /// <returns>Array of element properties.</returns>
-    Task<XamlProperty[]> GetElementPropertiesAsync(string elementPath);
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementName">Name to search for.</param>
+    /// <returns>Array of matching elements.</returns>
+    Task<XamlElement[]> FindElementsByNameAsync(string xamlFilePath, string elementName);
 
     /// <summary>
-    /// Modifies a property of a XAML element in the designer.
+    /// Searches for elements by type within a XAML file.
     /// </summary>
-    /// <param name="elementPath">The path to the element.</param>
-    /// <param name="property">The property name to modify.</param>
-    /// <param name="value">The new value for the property.</param>
-    Task ModifyElementPropertyAsync(string elementPath, string property, object value);
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementType">Type to search for.</param>
+    /// <returns>Array of matching elements.</returns>
+    Task<XamlElement[]> FindElementsByTypeAsync(string xamlFilePath, string elementType);
+
+    /// <summary>
+    /// Adds a new property to elements with the specified name.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementName">Name of the element to modify.</param>
+    /// <param name="propertyName">Name of the property to add.</param>
+    /// <param name="propertyValue">Value for the new property.</param>
+    /// <returns>True if the property was added successfully, false otherwise.</returns>
+    Task<bool> AddElementPropertyAsync(string xamlFilePath, string elementName, string propertyName, string propertyValue);
+
+    /// <summary>
+    /// Removes a property from elements with the specified name.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementName">Name of the element to modify.</param>
+    /// <param name="propertyName">Name of the property to remove.</param>
+    /// <returns>True if the property was removed successfully, false otherwise.</returns>
+    Task<bool> RemoveElementPropertyAsync(string xamlFilePath, string elementName, string propertyName);
+
+    /// <summary>
+    /// Modifies properties for all elements of a specific type.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <param name="elementType">Type of elements to modify.</param>
+    /// <param name="propertyName">Name of the property to modify.</param>
+    /// <param name="propertyValue">New value for the property.</param>
+    /// <returns>True if the modification was successful, false otherwise.</returns>
+    Task<bool> ModifyElementsByTypeAsync(string xamlFilePath, string elementType, string propertyName, string propertyValue);
+
+    /// <summary>
+    /// Finds all elements in a XAML file that have data binding expressions.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <returns>Array of elements with bindings.</returns>
+    Task<XamlElement[]> FindElementsWithBindingsAsync(string xamlFilePath);
+
+    /// <summary>
+    /// Gets comprehensive statistics about binding usage in a XAML file.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <returns>Binding usage statistics.</returns>
+    Task<BindingStatistics> GetBindingStatisticsAsync(string xamlFilePath);
+
+    /// <summary>
+    /// Gets the root element from a XAML file.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <returns>Root element information, or null if not found.</returns>
+    Task<XamlElement?> GetRootElementAsync(string xamlFilePath);
+
+    /// <summary>
+    /// Creates a backup of a XAML file before modification.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file.</param>
+    /// <returns>Path to the backup file, or null if backup failed.</returns>
+    Task<string?> CreateBackupAsync(string xamlFilePath);
+
+    /// <summary>
+    /// Invalidates the parser cache for a specific XAML file.
+    /// </summary>
+    /// <param name="xamlFilePath">Path to the XAML file to invalidate.</param>
+    void InvalidateParserCache(string xamlFilePath);
+
+    /// <summary>
+    /// Clears all cached XAML documents in the parser.
+    /// </summary>
+    void ClearParserCache();
 
     /// <summary>
     /// Analyses data bindings in a XAML file.
@@ -101,19 +173,39 @@ public class XamlDesignerCapture
 public class XamlElement
 {
     /// <summary>
-    /// The name of the element.
+    /// The local name of the element.
     /// </summary>
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
-    /// The type of the element.
+    /// The namespace of the element.
     /// </summary>
-    public string Type { get; set; } = string.Empty;
+    public string Namespace { get; set; } = string.Empty;
 
     /// <summary>
-    /// The path to this element in the visual tree.
+    /// The type of the element (local name).
     /// </summary>
-    public string Path { get; set; } = string.Empty;
+    public string ElementType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The element name from x:Name or Name attribute, if present.
+    /// </summary>
+    public string ElementName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The parent element, if any.
+    /// </summary>
+    public XamlElement? Parent { get; set; }
+
+    /// <summary>
+    /// The depth of this element in the visual tree (0 for root).
+    /// </summary>
+    public int Depth { get; set; }
+
+    /// <summary>
+    /// Properties of this element.
+    /// </summary>
+    public Dictionary<string, string> Properties { get; set; } = new();
 }
 
 /// <summary>
@@ -184,49 +276,29 @@ public class XamlDesignerWindow
 public class XamlBindingInfo
 {
     /// <summary>
-    /// The element that contains the binding.
-    /// </summary>
-    public string ElementName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// The element type that contains the binding.
-    /// </summary>
-    public string ElementType { get; set; } = string.Empty;
-
-    /// <summary>
-    /// The property that has the binding.
-    /// </summary>
-    public string PropertyName { get; set; } = string.Empty;
-
-    /// <summary>
     /// The binding expression (e.g., "{Binding Path=PropertyName}").
     /// </summary>
-    public string BindingExpression { get; set; } = string.Empty;
+    public string Expression { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The type of binding (Binding, StaticResource, DynamicResource, RelativeSource, x:Bind).
+    /// </summary>
+    public string BindingType { get; set; } = string.Empty;
 
     /// <summary>
     /// The binding path extracted from the expression.
     /// </summary>
-    public string BindingPath { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
 
     /// <summary>
-    /// The binding mode (OneWay, TwoWay, OneTime, etc.).
+    /// The resource key for resource bindings.
     /// </summary>
-    public string BindingMode { get; set; } = string.Empty;
+    public string ResourceKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// The converter used in the binding, if any.
+    /// The file path where this binding was found.
     /// </summary>
-    public string? Converter { get; set; }
-
-    /// <summary>
-    /// Whether this is a resource binding ({StaticResource}).
-    /// </summary>
-    public bool IsResourceBinding { get; set; }
-
-    /// <summary>
-    /// Whether this is a dynamic resource binding ({DynamicResource}).
-    /// </summary>
-    public bool IsDynamicResourceBinding { get; set; }
+    public string FilePath { get; set; } = string.Empty;
 
     /// <summary>
     /// The line number in the XAML file where this binding occurs.
@@ -234,9 +306,9 @@ public class XamlBindingInfo
     public int LineNumber { get; set; }
 
     /// <summary>
-    /// Additional metadata about the binding.
+    /// Additional properties extracted from the binding expression.
     /// </summary>
-    public Dictionary<string, object> Metadata { get; set; } = new();
+    public Dictionary<string, string> Properties { get; set; } = new();
 }
 
 /// <summary>
@@ -250,24 +322,14 @@ public class BindingValidationResult
     public XamlBindingInfo Binding { get; set; } = new();
 
     /// <summary>
-    /// Whether the binding validation passed.
-    /// </summary>
-    public bool IsValid { get; set; }
-
-    /// <summary>
     /// The severity of any issues found.
     /// </summary>
     public ValidationSeverity Severity { get; set; }
 
     /// <summary>
-    /// List of validation issues found.
+    /// List of validation messages found.
     /// </summary>
-    public List<string> Issues { get; set; } = new();
-
-    /// <summary>
-    /// List of recommendations for improving the binding.
-    /// </summary>
-    public List<string> Recommendations { get; set; } = new();
+    public List<string> Messages { get; set; } = new();
 }
 
 /// <summary>
