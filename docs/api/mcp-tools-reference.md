@@ -329,83 +329,298 @@ Show me the current debug state including call stack and local variables so I ca
 
 ### `vs_capture_xaml_designer`
 
-**Purpose:** Capture a screenshot of the XAML designer surface for a specific XAML file
+**Purpose:** Capture high-quality screenshots of XAML designer surfaces with optional annotations and metadata
 
 **Parameters:**
-- `xaml_file_path` (required): Full path to XAML file
-- `include_properties` (optional): Include properties panel in screenshot (default: false)
-- `image_quality` (optional): JPEG quality 1-100 (default: 85)
+- `target_window` (optional): Specific designer window to capture (auto-detects active XAML designer if not specified)
+- `include_annotations` (optional): Add element highlighting and metadata overlays (default: true)
+- `capture_quality` (optional): Image quality setting - "standard" or "high" (default: "high")
+- `output_path` (optional): Custom output location for capture files
+- `filename_template` (optional): Custom filename template with variables like ${timestamp}, ${window}
 
 **Returns:**
 ```json
 {
   "success": true,
   "data": {
-    "imageData": "iVBORw0KGgoAAAANSUhEUgAA...base64_encoded_image...",
-    "imageFormat": "PNG",
-    "width": 1200,
-    "height": 800,
-    "fileSizeBytes": 245760,
-    "xamlFile": "MainWindow.xaml",
-    "designerMode": "Design",
-    "captureTimestamp": "2025-08-12T16:45:30.123Z"
+    "image_path": "/temp/xaml_capture_20250814_143022.png",
+    "metadata": {
+      "window_title": "MainWindow.xaml [Design]",
+      "capture_size": "1920x1080",
+      "elements_annotated": 15,
+      "capture_timestamp": "2025-08-14T14:30:22Z",
+      "xaml_file": "MainWindow.xaml",
+      "designer_mode": "Design"
+    },
+    "annotations": [
+      {
+        "element_name": "LoginButton",
+        "element_type": "Button",
+        "bounds": { "x": 100, "y": 200, "width": 120, "height": 35 },
+        "highlight_color": "#FF0000"
+      }
+    ]
   }
 }
 ```
 
 **Claude Code Example:**
 ```
-Capture the XAML designer for MainWindow.xaml including the properties panel so I can see the current design layout
+Capture the active XAML designer with annotations to show element boundaries and properties for UI review
 ```
 
 **Error Responses:**
-- `XAML_FILE_NOT_FOUND` - Specified XAML file not found or not open
-- `DESIGNER_NOT_ACTIVE` - XAML designer is not currently active
+- `NO_XAML_DESIGNERS` - No XAML designer windows found
+- `DESIGNER_NOT_ACTIVE` - Specified XAML designer is not currently active
 - `CAPTURE_FAILED` - Screenshot capture operation failed
+- `PATH_VALIDATION_FAILED` - Output path failed security validation
 
 ---
 
 ### `vs_get_xaml_elements`
 
-**Purpose:** Get information about XAML elements in the designer
+**Purpose:** Extract and analyse XAML element hierarchy and properties from files or active designers
 
 **Parameters:**
-- `xaml_file_path` (required): Full path to XAML file
-- `element_filter` (optional): Filter by element type (e.g., "Button", "TextBox")
+- `xaml_file_path` (required): Path to XAML file to analyse
+- `include_properties` (optional): Include detailed element properties (default: true)
+- `filter_by_type` (optional): Filter by element type (e.g., "Button", "TextBox")
+- `max_depth` (optional): Limit hierarchy depth for performance (default: unlimited)
 
 **Returns:**
 ```json
 {
   "success": true,
   "data": {
-    "xamlFile": "MainWindow.xaml",
-    "rootElement": "Window",
     "elements": [
       {
-        "name": "LoginButton",
-        "type": "Button",
+        "element_type": "Grid",
+        "element_name": "MainGrid",
+        "properties": {
+          "Background": "White",
+          "Margin": "10",
+          "HorizontalAlignment": "Stretch"
+        },
+        "children_count": 3,
+        "binding_count": 0,
+        "hierarchy_level": 1
+      },
+      {
+        "element_type": "Button",
+        "element_name": "LoginButton",
         "properties": {
           "Content": "Login",
           "Width": "120",
           "Height": "35",
-          "Margin": "10,10,0,0"
+          "Command": "{Binding LoginCommand}"
         },
-        "position": {
-          "x": 50,
-          "y": 100,
-          "width": 120,
-          "height": 35
-        }
+        "children_count": 0,
+        "binding_count": 1,
+        "hierarchy_level": 2
       }
     ],
-    "totalElements": 15
+    "total_elements": 15,
+    "analysis_timestamp": "2025-08-14T14:30:22Z",
+    "xaml_file": "MainWindow.xaml"
   }
 }
 ```
 
 **Claude Code Example:**
 ```
-Show me all Button elements in MainWindow.xaml with their positions and properties for layout analysis
+Analyse MainWindow.xaml and show me all Button elements with their data binding information
+```
+
+**Error Responses:**
+- `XAML_FILE_NOT_FOUND` - Specified XAML file not found
+- `XAML_PARSING_FAILED` - XAML file contains syntax errors
+- `PATH_VALIDATION_FAILED` - File path failed security validation
+
+---
+
+### `vs_modify_xaml_element`
+
+**Purpose:** Modify XAML element properties with immediate visual feedback and backup creation
+
+**Parameters:**
+- `xaml_file_path` (required): Path to XAML file
+- `element_selector` (required): Element selector (name, XPath, or CSS-like selector)
+- `property_name` (required): Property to modify
+- `property_value` (required): New property value
+- `create_backup` (optional): Create backup before modification (default: true)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "modified_elements": 1,
+    "backup_created": "/backups/MainWindow_20250814_143022.xaml.bak",
+    "changes": [
+      {
+        "element": "LoginButton",
+        "property": "Content",
+        "old_value": "Login",
+        "new_value": "Sign In"
+      }
+    ],
+    "modification_timestamp": "2025-08-14T14:30:22Z"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Change the LoginButton content from "Login" to "Sign In" and create a backup of the original file
+```
+
+**Error Responses:**
+- `ELEMENT_NOT_FOUND` - Specified element not found in XAML
+- `PROPERTY_MODIFICATION_FAILED` - Property could not be modified
+- `BACKUP_CREATION_FAILED` - Backup file could not be created
+- `FILE_READ_ONLY` - XAML file is read-only
+
+---
+
+### `vs_analyse_bindings`
+
+**Purpose:** Analyse, validate, and optimise XAML data binding expressions with performance recommendations
+
+**Parameters:**
+- `xaml_file_path` (required): Path to XAML file
+- `check_performance` (optional): Include performance analysis and recommendations (default: false)
+- `validate_paths` (optional): Validate binding paths and expressions (default: true)
+- `include_statistics` (optional): Include comprehensive binding statistics (default: true)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "bindings": [
+      {
+        "element": "NameTextBox",
+        "property": "Text",
+        "binding_type": "Binding",
+        "path": "Customer.Name",
+        "mode": "TwoWay",
+        "validation_result": "Valid",
+        "performance_score": 8.5,
+        "line_number": 42,
+        "recommendations": []
+      },
+      {
+        "element": "StatusLabel",
+        "property": "Content",
+        "binding_type": "StaticResource",
+        "resource_key": "StatusTemplate",
+        "validation_result": "Warning",
+        "performance_score": 6.0,
+        "line_number": 55,
+        "recommendations": ["Consider using DynamicResource for runtime updates"]
+      }
+    ],
+    "statistics": {
+      "total_bindings": 23,
+      "valid_bindings": 21,
+      "warnings": 2,
+      "errors": 0,
+      "performance_issues": 1,
+      "binding_types": {
+        "Binding": 15,
+        "StaticResource": 5,
+        "DynamicResource": 2,
+        "x:Bind": 1
+      }
+    },
+    "recommendations": [
+      "Consider using OneWay binding for read-only CustomerID property",
+      "Resource key 'StatusTemplate' not found in current resource dictionaries"
+    ]
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Analyse all data bindings in MainWindow.xaml and provide performance recommendations for optimisation
+```
+
+**Error Responses:**
+- `XAML_PARSING_FAILED` - XAML file contains syntax errors
+- `BINDING_ANALYSIS_FAILED` - Error during binding expression analysis
+- `PATH_VALIDATION_FAILED` - File path failed security validation
+
+---
+
+### `vs_find_xaml_elements_by_name`
+
+**Purpose:** Search for specific elements by name across XAML files
+
+**Parameters:**
+- `xaml_file_path` (required): Path to XAML file
+- `element_name` (required): Name to search for (supports wildcards)
+- `case_sensitive` (optional): Case-sensitive search (default: false)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "matching_elements": [
+      {
+        "element_type": "Button",
+        "element_name": "LoginButton",
+        "line_number": 25,
+        "properties": {
+          "Content": "Login",
+          "Command": "{Binding LoginCommand}"
+        }
+      }
+    ],
+    "total_matches": 1,
+    "search_term": "LoginButton"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Find all elements with names containing "Login" in MainWindow.xaml for refactoring purposes
+```
+
+---
+
+### `vs_get_xaml_binding_statistics`
+
+**Purpose:** Get comprehensive statistics about data binding usage in a XAML file
+
+**Parameters:**
+- `xaml_file_path` (required): Path to XAML file
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "file_path": "MainWindow.xaml",
+    "total_bindings": 23,
+    "data_bindings": 15,
+    "static_resource_bindings": 5,
+    "dynamic_resource_bindings": 2,
+    "relative_source_bindings": 1,
+    "validation_errors": 0,
+    "validation_warnings": 2,
+    "performance_issues": 1,
+    "elements_with_bindings": 12,
+    "analysis_timestamp": "2025-08-14T14:30:22Z"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Show me binding usage statistics for MainWindow.xaml to understand data binding patterns
 ```
 
 ---
