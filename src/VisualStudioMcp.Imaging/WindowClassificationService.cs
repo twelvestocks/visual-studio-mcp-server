@@ -57,15 +57,50 @@ public class WindowClassificationService : IWindowClassificationService
                 
                 try
                 {
-                    // Enumerate all top-level windows
-                    GdiNativeMethods.EnumWindows(EnumWindowsCallback, IntPtr.Zero);
+                    // Use timeout to prevent indefinite blocking during window enumeration
+                    var timeout = TimeSpan.FromSeconds(30); // 30 second timeout
+                    var startTime = DateTime.UtcNow;
+                    
+                    // Create cancellation token for timeout
+                    using var cts = new CancellationTokenSource(timeout);
+                    var cancellationToken = cts.Token;
+                    
+                    // Enumerate all top-level windows with timeout monitoring
+                    var enumerationTask = Task.Run(() =>
+                    {
+                        GdiNativeMethods.EnumWindows((hwnd, lParam) =>
+                        {
+                            // Check for cancellation during enumeration
+                            if (cancellationToken.IsCancellationRequested)
+                            {
+                                _logger.LogWarning("Window enumeration cancelled due to timeout");
+                                return false; // Stop enumeration
+                            }
+                            
+                            return EnumWindowsCallback(hwnd, lParam);
+                        }, IntPtr.Zero);
+                    }, cancellationToken);
+                    
+                    // Wait for enumeration with timeout
+                    if (!enumerationTask.Wait(timeout))
+                    {
+                        _logger.LogWarning("Window enumeration timed out after {Timeout} seconds", timeout.TotalSeconds);
+                        return new List<VisualStudioWindow>();
+                    }
                     
                     // Post-process to identify child windows and relationships
                     PostProcessWindowRelationships();
                     
-                    _logger.LogInformation("Discovered {Count} Visual Studio windows", _discoveredWindows.Count);
+                    var elapsed = DateTime.UtcNow - startTime;
+                    _logger.LogInformation("Discovered {Count} Visual Studio windows in {Elapsed}ms", 
+                        _discoveredWindows.Count, elapsed.TotalMilliseconds);
                     
                     return _discoveredWindows.ToList(); // Return a copy
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("Window discovery was cancelled due to timeout");
+                    return new List<VisualStudioWindow>();
                 }
                 catch (Exception ex)
                 {
@@ -174,6 +209,7 @@ public class WindowClassificationService : IWindowClassificationService
 
     private bool EnumWindowsCallback(IntPtr hwnd, IntPtr lParam)
     {
+        VisualStudioWindow? windowInfo = null;
         try
         {
             if (!GdiNativeMethods.IsWindow(hwnd) || !GdiNativeMethods.IsWindowVisible(hwnd))
@@ -181,16 +217,26 @@ public class WindowClassificationService : IWindowClassificationService
                 return true; // Continue enumeration
             }
 
-            var windowInfo = ExtractWindowInfo(hwnd);
+            windowInfo = ExtractWindowInfo(hwnd);
             
             // Check if this is a Visual Studio window
             if (IsVisualStudioWindow(windowInfo))
             {
                 windowInfo.WindowType = ClassifyWindowByInfo(windowInfo);
-                _discoveredWindows.Add(windowInfo);
                 
-                // Enumerate child windows
-                EnumerateChildWindows(hwnd, windowInfo);
+                // Enumerate child windows first (may throw exceptions)
+                try
+                {
+                    EnumerateChildWindows(hwnd, windowInfo);
+                }
+                catch (Exception childEx)
+                {
+                    _logger.LogWarning(childEx, "Error enumerating child windows for parent: {Handle}", hwnd);
+                    // Continue with parent window even if child enumeration fails
+                }
+                
+                // Only add to collection if everything succeeded
+                _discoveredWindows.Add(windowInfo);
             }
 
             return true; // Continue enumeration
@@ -198,7 +244,22 @@ public class WindowClassificationService : IWindowClassificationService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error processing window during enumeration: {Handle}", hwnd);
-            return true; // Continue enumeration
+            
+            // Ensure partial windowInfo is not left in inconsistent state
+            if (windowInfo != null)
+            {
+                try
+                {
+                    // Clean up any partially initialized child windows
+                    windowInfo.ChildWindows.Clear();
+                }
+                catch (Exception cleanupEx)
+                {
+                    _logger.LogWarning(cleanupEx, "Error cleaning up window info during exception handling");
+                }
+            }
+            
+            return true; // Continue enumeration even after cleanup
         }
     }
 
@@ -291,13 +352,31 @@ public class WindowClassificationService : IWindowClassificationService
     {
         try
         {
-            // Check process ownership
-            using var process = System.Diagnostics.Process.GetProcessById((int)window.ProcessId);
-            var processName = process.ProcessName.ToLowerInvariant();
+            // Check process ownership with proper exception handling
+            string processName;
+            try
+            {
+                using var process = System.Diagnostics.Process.GetProcessById((int)window.ProcessId);
+                processName = process.ProcessName.ToLowerInvariant();
+            }
+            catch (ArgumentException)
+            {
+                // Process not found or access denied
+                _logger.LogWarning("Process access denied or not found for PID: {ProcessId}", window.ProcessId);
+                return false;
+            }
+            catch (InvalidOperationException)
+            {
+                // Process has terminated
+                _logger.LogWarning("Process has terminated for PID: {ProcessId}", window.ProcessId);
+                return false;
+            }
 
-            // Known Visual Studio process names
-            var vsProcessNames = new[] { "devenv", "visualstudio", "code" };
-            if (!vsProcessNames.Any(p => processName.Contains(p)))
+            // Known Visual Studio process names - convert to HashSet for performance
+            var vsProcessNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
+            { "devenv", "visualstudio", "code" };
+            
+            if (!vsProcessNames.Any(p => processName.Contains(p, StringComparison.OrdinalIgnoreCase)))
             {
                 return false;
             }

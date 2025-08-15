@@ -304,6 +304,35 @@ public class ImagingService : IImagingService
     {
         try
         {
+            // Memory pressure monitoring - calculate estimated memory usage
+            const long maxSafeCaptureSize = 50_000_000; // 50MB threshold
+            long estimatedMemoryUsage = (long)width * height * 4; // 4 bytes per pixel (RGBA)
+            
+            if (estimatedMemoryUsage > maxSafeCaptureSize)
+            {
+                var estimatedMB = estimatedMemoryUsage / 1_000_000;
+                _logger.LogWarning("Large capture requested: {Width}x{Height} = {SizeMB}MB. Consider scaling down.", 
+                    width, height, estimatedMB);
+                
+                // For very large captures, refuse to prevent OOM
+                if (estimatedMemoryUsage > maxSafeCaptureSize * 2) // 100MB+
+                {
+                    _logger.LogError("Capture too large: {SizeMB}MB exceeds maximum safe limit of {MaxMB}MB", 
+                        estimatedMB, maxSafeCaptureSize * 2 / 1_000_000);
+                    return CreateEmptyCapture();
+                }
+            }
+            
+            // Check current memory pressure before proceeding
+            var gcMemory = GC.GetTotalMemory(false);
+            if (gcMemory > 500_000_000) // 500MB threshold
+            {
+                _logger.LogWarning("High memory pressure detected: {MemoryMB}MB. Forcing garbage collection.", 
+                    gcMemory / 1_000_000);
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
             using var memoryDC = SafeMemoryDC.CreateCompatibleDC(sourceDC);
             if (memoryDC == null)
             {
