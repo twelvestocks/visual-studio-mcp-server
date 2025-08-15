@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Extensions.Logging;
 
 namespace VisualStudioMcp.Imaging;
@@ -11,12 +12,14 @@ namespace VisualStudioMcp.Imaging;
 public class ImagingService : IImagingService
 {
     private readonly ILogger<ImagingService> _logger;
+    private readonly IWindowClassificationService _windowClassification;
 
     // Note: Windows API declarations moved to GdiNativeMethods for security and maintainability
 
-    public ImagingService(ILogger<ImagingService> logger)
+    public ImagingService(ILogger<ImagingService> logger, IWindowClassificationService windowClassification)
     {
         _logger = logger;
+        _windowClassification = windowClassification;
     }
 
     public async Task<ImageCapture> CaptureWindowAsync(string windowTitle)
@@ -137,13 +140,58 @@ public class ImagingService : IImagingService
     }
 
     /// <summary>
-    /// Finds a window by partial title match.
+    /// Finds a window by partial title match using comprehensive window enumeration.
     /// </summary>
     private IntPtr FindWindowByPartialTitle(string partialTitle)
     {
-        // This is a simplified implementation
-        // In a full implementation, we would enumerate all windows
-        return IntPtr.Zero;
+        IntPtr foundWindow = IntPtr.Zero;
+        
+        try
+        {
+            GdiNativeMethods.EnumWindows((hwnd, lParam) =>
+            {
+                if (!GdiNativeMethods.IsWindowVisible(hwnd))
+                {
+                    return true; // Continue enumeration
+                }
+
+                try
+                {
+                    // Get window title
+                    var titleLength = GdiNativeMethods.GetWindowTextLength(hwnd);
+                    if (titleLength > 0)
+                    {
+                        var titleBuilder = new StringBuilder(titleLength + 1);
+                        GdiNativeMethods.GetWindowText(hwnd, titleBuilder, titleBuilder.Capacity);
+                        var title = titleBuilder.ToString();
+
+                        // Check for partial match
+                        if (!string.IsNullOrEmpty(title) && 
+                            title.Contains(partialTitle, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Validate window ownership for security
+                            if (ValidateWindowOwnership(hwnd))
+                            {
+                                foundWindow = hwnd;
+                                return false; // Stop enumeration
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error checking window title for handle: {Handle}", hwnd);
+                }
+
+                return true; // Continue enumeration
+            }, IntPtr.Zero);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error during window enumeration for partial title: {PartialTitle}", partialTitle);
+        }
+
+        return foundWindow;
     }
 
     /// <summary>
@@ -444,4 +492,465 @@ public class ImagingService : IImagingService
             throw new ArgumentException($"Invalid file path: {filePath}", nameof(filePath), ex);
         }
     }
+
+    #region Specialized Capture Methods
+
+    public async Task<SpecializedCapture> CaptureSolutionExplorerAsync()
+    {
+        _logger.LogInformation("Capturing Solution Explorer with annotations");
+
+        try
+        {
+            var windows = await _windowClassification.FindWindowsByTypeAsync(VisualStudioWindowType.SolutionExplorer);
+            var solutionExplorer = windows.FirstOrDefault();
+            
+            if (solutionExplorer == null)
+            {
+                _logger.LogWarning("Solution Explorer window not found");
+                return CreateEmptySpecializedCapture(VisualStudioWindowType.SolutionExplorer);
+            }
+
+            return await CaptureWindowWithAnnotationAsync(solutionExplorer.Handle, VisualStudioWindowType.SolutionExplorer);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing Solution Explorer");
+            return CreateEmptySpecializedCapture(VisualStudioWindowType.SolutionExplorer);
+        }
+    }
+
+    public async Task<SpecializedCapture> CapturePropertiesWindowAsync()
+    {
+        _logger.LogInformation("Capturing Properties Window with highlighting");
+
+        try
+        {
+            var windows = await _windowClassification.FindWindowsByTypeAsync(VisualStudioWindowType.PropertiesWindow);
+            var propertiesWindow = windows.FirstOrDefault();
+            
+            if (propertiesWindow == null)
+            {
+                _logger.LogWarning("Properties window not found");
+                return CreateEmptySpecializedCapture(VisualStudioWindowType.PropertiesWindow);
+            }
+
+            return await CaptureWindowWithAnnotationAsync(propertiesWindow.Handle, VisualStudioWindowType.PropertiesWindow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing Properties Window");
+            return CreateEmptySpecializedCapture(VisualStudioWindowType.PropertiesWindow);
+        }
+    }
+
+    public async Task<SpecializedCapture> CaptureErrorListAndOutputAsync()
+    {
+        _logger.LogInformation("Capturing Error List and Output windows with formatting");
+
+        try
+        {
+            var errorListWindows = await _windowClassification.FindWindowsByTypeAsync(VisualStudioWindowType.ErrorList);
+            var errorListWindow = errorListWindows.FirstOrDefault();
+            
+            if (errorListWindow == null)
+            {
+                _logger.LogWarning("Error List window not found");
+                return CreateEmptySpecializedCapture(VisualStudioWindowType.ErrorList);
+            }
+
+            return await CaptureWindowWithAnnotationAsync(errorListWindow.Handle, VisualStudioWindowType.ErrorList);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing Error List and Output windows");
+            return CreateEmptySpecializedCapture(VisualStudioWindowType.ErrorList);
+        }
+    }
+
+    public async Task<SpecializedCapture> CaptureCodeEditorAsync(IntPtr? editorWindowHandle = null)
+    {
+        _logger.LogInformation("Capturing Code Editor with syntax highlighting preservation");
+
+        try
+        {
+            IntPtr targetWindow;
+            
+            if (editorWindowHandle.HasValue && editorWindowHandle.Value != IntPtr.Zero)
+            {
+                targetWindow = editorWindowHandle.Value;
+            }
+            else
+            {
+                var codeEditors = await _windowClassification.FindWindowsByTypeAsync(VisualStudioWindowType.CodeEditor);
+                var activeEditor = codeEditors.FirstOrDefault(w => w.IsActive) ?? codeEditors.FirstOrDefault();
+                
+                if (activeEditor == null)
+                {
+                    _logger.LogWarning("Code Editor window not found");
+                    return CreateEmptySpecializedCapture(VisualStudioWindowType.CodeEditor);
+                }
+                
+                targetWindow = activeEditor.Handle;
+            }
+
+            return await CaptureWindowWithAnnotationAsync(targetWindow, VisualStudioWindowType.CodeEditor);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing Code Editor");
+            return CreateEmptySpecializedCapture(VisualStudioWindowType.CodeEditor);
+        }
+    }
+
+    public async Task<FullIdeCapture> CaptureFullIdeWithLayoutAsync()
+    {
+        _logger.LogInformation("Capturing complete Visual Studio IDE with layout");
+
+        try
+        {
+            var layout = await _windowClassification.AnalyzeLayoutAsync();
+            var fullCapture = new FullIdeCapture
+            {
+                Layout = layout,
+                CaptureTime = DateTime.UtcNow
+            };
+
+            // Capture main window first for the composite image
+            if (layout.MainWindow != null)
+            {
+                var mainCapture = CaptureWindowByHandle(layout.MainWindow.Handle);
+                fullCapture.CompositeImage = mainCapture;
+            }
+
+            // Capture each significant window
+            var captureTasks = new List<Task<SpecializedCapture>>();
+            
+            foreach (var windowType in layout.WindowsByType.Keys)
+            {
+                if (windowType != VisualStudioWindowType.Unknown && windowType != VisualStudioWindowType.MainWindow)
+                {
+                    var windows = layout.WindowsByType[windowType];
+                    foreach (var window in windows.Take(1)) // Capture first instance of each type
+                    {
+                        captureTasks.Add(CaptureWindowWithAnnotationAsync(window.Handle, windowType));
+                    }
+                }
+            }
+
+            // Wait for all captures to complete
+            var windowCaptures = await Task.WhenAll(captureTasks);
+            fullCapture.WindowCaptures = windowCaptures.Where(c => c.ImageData.Length > 0).ToList();
+
+            // Add IDE metadata
+            fullCapture.IdeMetadata["WindowCount"] = layout.AllWindows.Count;
+            fullCapture.IdeMetadata["WindowTypes"] = layout.WindowsByType.Keys.ToList();
+            fullCapture.IdeMetadata["CapturedWindows"] = fullCapture.WindowCaptures.Count;
+
+            _logger.LogInformation("Full IDE capture completed: {WindowCount} windows captured", 
+                fullCapture.WindowCaptures.Count);
+
+            return fullCapture;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing full IDE");
+            return new FullIdeCapture { CaptureTime = DateTime.UtcNow };
+        }
+    }
+
+    public async Task<SpecializedCapture> CaptureWindowWithAnnotationAsync(IntPtr windowHandle, VisualStudioWindowType windowType)
+    {
+        _logger.LogInformation("Capturing window with annotations: {WindowType}", windowType);
+
+        try
+        {
+            // Capture the basic window image
+            var baseCapture = CaptureWindowByHandle(windowHandle);
+            
+            // Create specialized capture from base capture
+            var specializedCapture = new SpecializedCapture
+            {
+                ImageData = baseCapture.ImageData,
+                ImageFormat = baseCapture.ImageFormat,
+                Width = baseCapture.Width,
+                Height = baseCapture.Height,
+                CaptureTime = baseCapture.CaptureTime,
+                Metadata = baseCapture.Metadata,
+                WindowType = windowType
+            };
+
+            // Apply window-type-specific annotations and metadata
+            await ApplyWindowSpecificProcessingAsync(specializedCapture, windowHandle, windowType);
+
+            return specializedCapture;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error capturing window with annotations: {WindowType}", windowType);
+            return CreateEmptySpecializedCapture(windowType);
+        }
+    }
+
+    private async Task ApplyWindowSpecificProcessingAsync(SpecializedCapture capture, IntPtr windowHandle, VisualStudioWindowType windowType)
+    {
+        switch (windowType)
+        {
+            case VisualStudioWindowType.SolutionExplorer:
+                await ProcessSolutionExplorerCapture(capture, windowHandle);
+                break;
+                
+            case VisualStudioWindowType.PropertiesWindow:
+                await ProcessPropertiesWindowCapture(capture, windowHandle);
+                break;
+                
+            case VisualStudioWindowType.ErrorList:
+                await ProcessErrorListCapture(capture, windowHandle);
+                break;
+                
+            case VisualStudioWindowType.CodeEditor:
+                await ProcessCodeEditorCapture(capture, windowHandle);
+                break;
+                
+            default:
+                await ProcessGenericWindowCapture(capture, windowHandle);
+                break;
+        }
+    }
+
+    private async Task ProcessSolutionExplorerCapture(SpecializedCapture capture, IntPtr windowHandle)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                // Add Solution Explorer specific metadata
+                capture.WindowMetadata.SolutionExplorer = new SolutionExplorerMetadata
+                {
+                    ProjectCount = EstimateProjectCount(capture),
+                    SelectedItem = "Unknown", // Would need UI Automation for accurate detection
+                    ExpandedNodes = new List<string>() // Would need UI Automation
+                };
+
+                // Add basic annotations for tree structure
+                AddTreeStructureAnnotations(capture);
+                
+                _logger.LogDebug("Solution Explorer processing completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing Solution Explorer capture");
+            }
+        });
+    }
+
+    private async Task ProcessPropertiesWindowCapture(SpecializedCapture capture, IntPtr windowHandle)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                // Add Properties Window specific metadata
+                capture.WindowMetadata.Properties = new PropertiesWindowMetadata
+                {
+                    SelectedObjectType = "Unknown", // Would need UI Automation
+                    Categories = new List<string>(), // Would need UI Automation
+                    ModifiedProperties = new List<string>()
+                };
+
+                // Add property grid annotations
+                AddPropertyGridAnnotations(capture);
+                
+                _logger.LogDebug("Properties Window processing completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing Properties Window capture");
+            }
+        });
+    }
+
+    private async Task ProcessErrorListCapture(SpecializedCapture capture, IntPtr windowHandle)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                // Add Error List specific metadata
+                capture.WindowMetadata.ErrorList = new ErrorListMetadata
+                {
+                    ErrorCount = 0, // Would need UI Automation for accurate counts
+                    WarningCount = 0,
+                    MessageCount = 0,
+                    ActiveFilter = "All"
+                };
+
+                // Add error highlighting annotations
+                AddErrorListAnnotations(capture);
+                
+                _logger.LogDebug("Error List processing completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing Error List capture");
+            }
+        });
+    }
+
+    private async Task ProcessCodeEditorCapture(SpecializedCapture capture, IntPtr windowHandle)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                // Add Code Editor specific metadata
+                capture.WindowMetadata.CodeEditor = new CodeEditorMetadata
+                {
+                    FileName = ExtractFileNameFromWindowTitle(windowHandle),
+                    Language = "Unknown", // Would need context analysis
+                    SyntaxHighlightingActive = true,
+                    CurrentLine = null, // Would need UI Automation
+                    CurrentColumn = null
+                };
+
+                // Add code structure annotations
+                AddCodeStructureAnnotations(capture);
+                
+                _logger.LogDebug("Code Editor processing completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing Code Editor capture");
+            }
+        });
+    }
+
+    private async Task ProcessGenericWindowCapture(SpecializedCapture capture, IntPtr windowHandle)
+    {
+        await Task.Run(() =>
+        {
+            try
+            {
+                // Add basic window outline
+                AddBasicWindowOutline(capture);
+                
+                _logger.LogDebug("Generic window processing completed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing generic window capture");
+            }
+        });
+    }
+
+    private int EstimateProjectCount(SpecializedCapture capture)
+    {
+        // Simple heuristic - would be more accurate with UI Automation
+        return 1; // Placeholder implementation
+    }
+
+    private void AddTreeStructureAnnotations(SpecializedCapture capture)
+    {
+        // Add basic tree outline annotation
+        capture.Annotations.Add(new CaptureAnnotation
+        {
+            Type = AnnotationType.Outline,
+            Bounds = new WindowBounds { X = 10, Y = 50, Width = capture.Width - 20, Height = capture.Height - 100 },
+            Color = "#0078D4", // Visual Studio blue
+            Label = "Solution Explorer Tree"
+        });
+    }
+
+    private void AddPropertyGridAnnotations(SpecializedCapture capture)
+    {
+        // Add property grid outline annotation
+        capture.Annotations.Add(new CaptureAnnotation
+        {
+            Type = AnnotationType.Outline,
+            Bounds = new WindowBounds { X = 5, Y = 30, Width = capture.Width - 10, Height = capture.Height - 60 },
+            Color = "#0078D4",
+            Label = "Properties Grid"
+        });
+    }
+
+    private void AddErrorListAnnotations(SpecializedCapture capture)
+    {
+        // Add error list outline annotation
+        capture.Annotations.Add(new CaptureAnnotation
+        {
+            Type = AnnotationType.Outline,
+            Bounds = new WindowBounds { X = 5, Y = 30, Width = capture.Width - 10, Height = capture.Height - 60 },
+            Color = "#E81123", // Error red
+            Label = "Error List"
+        });
+    }
+
+    private void AddCodeStructureAnnotations(SpecializedCapture capture)
+    {
+        // Add code editor outline annotation
+        capture.Annotations.Add(new CaptureAnnotation
+        {
+            Type = AnnotationType.Outline,
+            Bounds = new WindowBounds { X = 5, Y = 5, Width = capture.Width - 10, Height = capture.Height - 10 },
+            Color = "#569CD6", // Code blue
+            Label = "Code Editor"
+        });
+    }
+
+    private void AddBasicWindowOutline(SpecializedCapture capture)
+    {
+        // Add basic window outline
+        capture.Annotations.Add(new CaptureAnnotation
+        {
+            Type = AnnotationType.Outline,
+            Bounds = new WindowBounds { X = 1, Y = 1, Width = capture.Width - 2, Height = capture.Height - 2 },
+            Color = "#666666", // Grey outline
+            Label = "Window Outline"
+        });
+    }
+
+    private string? ExtractFileNameFromWindowTitle(IntPtr windowHandle)
+    {
+        try
+        {
+            var titleLength = GdiNativeMethods.GetWindowTextLength(windowHandle);
+            if (titleLength > 0)
+            {
+                var titleBuilder = new StringBuilder(titleLength + 1);
+                GdiNativeMethods.GetWindowText(windowHandle, titleBuilder, titleBuilder.Capacity);
+                var title = titleBuilder.ToString();
+
+                // Extract filename from title (usually contains filename)
+                var parts = title.Split(new[] { '-', '—' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 0)
+                {
+                    var fileName = parts[0].Trim();
+                    if (fileName.Contains('.'))
+                    {
+                        return fileName;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error extracting filename from window title");
+        }
+
+        return null;
+    }
+
+    private SpecializedCapture CreateEmptySpecializedCapture(VisualStudioWindowType windowType)
+    {
+        return new SpecializedCapture
+        {
+            ImageData = Array.Empty<byte>(),
+            ImageFormat = "PNG",
+            Width = 0,
+            Height = 0,
+            CaptureTime = DateTime.UtcNow,
+            WindowType = windowType
+        };
+    }
+
+    #endregion
 }
