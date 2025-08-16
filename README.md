@@ -9,29 +9,43 @@ A .NET 8 console application that provides Claude Code with comprehensive Visual
 
 ## 🚀 Quick Start
 
+**5-Minute Setup** - Get Visual Studio automation running with Claude Code in under 10 minutes!
+
 ### Prerequisites
 - Windows 10/11
 - Visual Studio 2022 (17.8 or later)
 - .NET 8 SDK
+- Claude Code
 
 ### Installation
 ```bash
-# Install as .NET global tool (coming soon)
-dotnet tool install --global VisualStudioMcp.Server
+# Install as .NET global tool
+dotnet tool install --global VisualStudioMcp
 
-# Or run from source
-git clone https://github.com/your-org/MCP-VS-AUTOMATION
-cd MCP-VS-AUTOMATION
-dotnet build
+# Verify installation
+vsmcp --version
 ```
 
-### Usage with Claude Code
-```bash
-# Start the MCP server
-vsmcp
-
-# Claude Code will automatically connect and gain access to VS automation tools
+### Claude Code Configuration
+Add to your `mcp_servers.json`:
+```json
+{
+  "mcpServers": {
+    "visual-studio": {
+      "command": "vsmcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
 ```
+
+### Your First Automation
+1. Open Visual Studio 2022 with a solution
+2. Start Claude Code
+3. Try: "List my Visual Studio instances and build my solution"
+
+**📋 Complete Setup Guide:** [Getting Started](docs/getting-started.md)
 
 ## ✨ Key Features
 
@@ -80,11 +94,24 @@ vsmcp
 
 Complete documentation is available in the [`/docs`](docs/) directory:
 
-- **[📋 Project Overview](docs/project/project-overview.md)** - Vision, goals, and technology decisions
+### Getting Started
+- **[🚀 Getting Started](docs/getting-started.md)** - 5-minute setup guide
+- **[📚 API Reference](docs/api/mcp-tools-reference.md)** - Complete MCP tools documentation (17 tools)
+- **[👥 Claude Code Integration](docs/user-guides/claude-code-integration.md)** - Workflows and examples
+
+### Operations & Support
+- **[🔧 Installation Guide](docs/operations/installation-guide.md)** - Detailed installation and setup
+- **[🐛 Troubleshooting Matrix](docs/operations/troubleshooting-matrix.md)** - Comprehensive error resolution
+- **[📈 Performance Benchmarks](docs/operations/performance-benchmarks.md)** - Performance expectations and optimization
+
+### Security & Enterprise
+- **[🛡️ Security & Compliance](docs/security/security-compliance.md)** - Enterprise security documentation
+- **[🏢 Enterprise Deployment](docs/operations/installation-guide.md#enterprise-deployment)** - Group Policy and corporate deployment
+
+### Development
 - **[🛠️ Development Setup](docs/development/development-setup.md)** - Environment configuration guide  
 - **[🏗️ System Architecture](docs/architecture/system-architecture.md)** - Technical design and patterns
-- **[📚 API Reference](docs/api/mcp-tools-reference.md)** - Complete MCP tools documentation
-- **[👥 User Guides](docs/user-guides/claude-code-integration.md)** - Claude Code integration workflows
+- **[📋 Project Overview](docs/project/project-overview.md)** - Vision, goals, and technology decisions
 
 ## 🔧 Development
 
@@ -148,14 +175,16 @@ tests/
 
 ## 🐛 Troubleshooting
 
-Common issues and solutions:
+Quick solutions for common issues:
 
-- **Visual Studio not found:** Ensure VS 2022 is installed with .NET desktop workload
-- **COM exceptions:** Check Visual Studio is running and accessible  
-- **Permission errors:** Run with appropriate COM interop permissions
-- **Build failures:** Verify .NET 8 SDK installation
+| Issue | Quick Fix |
+|-------|-----------|
+| `vsmcp: command not found` | Run `dotnet tool install --global VisualStudioMcp` |
+| Claude Code connection failed | Check `mcp_servers.json` configuration and restart Claude Code |
+| No Visual Studio instances found | Ensure VS 2022 is running with a solution loaded |
+| Permission errors | Run Visual Studio as Administrator |
 
-For detailed troubleshooting, see [Troubleshooting Guide](docs/operations/troubleshooting-guide.md).
+**📋 Complete Troubleshooting:** [Troubleshooting Matrix](docs/operations/troubleshooting-matrix.md)
 
 ## 📄 License
 
