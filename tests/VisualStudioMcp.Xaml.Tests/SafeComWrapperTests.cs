@@ -58,8 +58,15 @@ public class SafeComWrapperTests
     public void Constructor_NullComObject_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new SafeComWrapper<ITestComObject>(null!, _mockLogger.Object));
+        try
+        {
+            new SafeComWrapper<ITestComObject>(null!, _mockLogger.Object);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -139,8 +146,15 @@ public class SafeComWrapperTests
         using var wrapper = new SafeComWrapper<ITestComObject>(mockComObject, _mockLogger.Object);
 
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            wrapper.Execute((Action<ITestComObject>)null!));
+        try
+        {
+            wrapper.Execute((Action<ITestComObject>)null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -322,8 +336,15 @@ public class SafeDteWrapperTests
     public void Constructor_NullDte_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new SafeDteWrapper(null!, _mockLogger.Object));
+        try
+        {
+            new SafeDteWrapper(null!, _mockLogger.Object);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

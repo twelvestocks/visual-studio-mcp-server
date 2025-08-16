@@ -62,16 +62,30 @@ public class SecureXmlHelperTests
     public void ParseXamlSecurely_NullContent_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            SecureXmlHelper.ParseXamlSecurely(null!));
+        try
+        {
+            SecureXmlHelper.ParseXamlSecurely(null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
     public void ParseXamlSecurely_EmptyContent_ThrowsXmlException()
     {
         // Act & Assert
-        Assert.ThrowsException<XmlException>(() => 
-            SecureXmlHelper.ParseXamlSecurely(""));
+        try
+        {
+            SecureXmlHelper.ParseXamlSecurely("");
+            Assert.Fail("Expected XmlException was not thrown");
+        }
+        catch (XmlException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -81,8 +95,15 @@ public class SecureXmlHelperTests
         var malformedXaml = "<Grid><Button></Grid>"; // Mismatched tags
 
         // Act & Assert
-        Assert.ThrowsException<XmlException>(() => 
-            SecureXmlHelper.ParseXamlSecurely(malformedXaml));
+        try
+        {
+            SecureXmlHelper.ParseXamlSecurely(malformedXaml);
+            Assert.Fail("Expected XmlException was not thrown");
+        }
+        catch (XmlException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -98,8 +119,15 @@ public class SecureXmlHelperTests
             """;
 
         // Act & Assert
-        Assert.ThrowsException<XmlException>(() => 
-            SecureXmlHelper.ParseXamlSecurely(xxeXaml));
+        try
+        {
+            SecureXmlHelper.ParseXamlSecurely(xxeXaml);
+            Assert.Fail("Expected XmlException was not thrown");
+        }
+        catch (XmlException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

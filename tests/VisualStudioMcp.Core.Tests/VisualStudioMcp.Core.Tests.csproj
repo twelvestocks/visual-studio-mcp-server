@@ -22,6 +22,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\VisualStudioMcp.Core\VisualStudioMcp.Core.csproj" />
     <ProjectReference Include="..\..\src\VisualStudioMcp.Shared\VisualStudioMcp.Shared.csproj" />
+    <ProjectReference Include="..\..\src\VisualStudioMcp.Server\VisualStudioMcp.Server.csproj" />
+    <ProjectReference Include="..\..\src\VisualStudioMcp.Debug\VisualStudioMcp.Debug.csproj" />
+    <ProjectReference Include="..\..\src\VisualStudioMcp.Imaging\VisualStudioMcp.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\VisualStudioMcp.Xaml\VisualStudioMcp.Xaml.csproj" />
   </ItemGroup>
 
 </Project>
