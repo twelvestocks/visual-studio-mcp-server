@@ -165,7 +165,9 @@ public class XamlWindowManagerTests
         // Since we can't mock actual windows, we expect null
         // In a real integration test with actual VS running, this might return a window
         Assert.IsNull(result);
-        _mockVsService.Verify(vs => vs.GetRunningInstancesAsync(), Times.Once);
+        // GetRunningInstancesAsync is called twice: once in GetActiveDesignerWindowAsync
+        // and once in FindXamlDesignerWindowsAsync for validation
+        _mockVsService.Verify(vs => vs.GetRunningInstancesAsync(), Times.Exactly(2));
     }
 
     [TestMethod]

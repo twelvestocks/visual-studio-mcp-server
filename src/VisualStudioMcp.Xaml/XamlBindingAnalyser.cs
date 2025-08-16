@@ -274,26 +274,55 @@ public class XamlBindingAnalyser
             }
         }
 
-        // Extract other properties
-        var propertyPatterns = new Dictionary<Regex, string>
-        {
-            { XamlBindingRegexPatterns.ModePattern, "Mode" },
-            { XamlBindingRegexPatterns.ConverterPattern, "Converter" },
-            { XamlBindingRegexPatterns.ElementNamePattern, "ElementName" },
-            { XamlBindingRegexPatterns.SourcePattern, "Source" },
-            { XamlBindingRegexPatterns.StringFormatPattern, "StringFormat" },
-            { XamlBindingRegexPatterns.UpdateSourceTriggerPattern, "UpdateSourceTrigger" },
-            { XamlBindingRegexPatterns.FallbackValuePattern, "FallbackValue" },
-            { XamlBindingRegexPatterns.TargetNullValuePattern, "TargetNullValue" }
-        };
+        // Extract properties that don't contain nested expressions first
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.ModePattern, "Mode", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.ElementNamePattern, "ElementName", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.SourcePattern, "Source", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.StringFormatPattern, "StringFormat", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.UpdateSourceTriggerPattern, "UpdateSourceTrigger", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.FallbackValuePattern, "FallbackValue", binding);
+        ExtractSimpleProperty(expression, XamlBindingRegexPatterns.TargetNullValuePattern, "TargetNullValue", binding);
+        
+        // Handle Converter last as it can be a StaticResource with nested braces
+        ExtractConverterProperty(expression, binding);
+    }
 
-        foreach (var (pattern, propertyName) in propertyPatterns)
+    /// <summary>
+    /// Extracts a simple property value from a binding expression.
+    /// </summary>
+    private void ExtractSimpleProperty(string expression, Regex pattern, string propertyName, XamlBindingInfo binding)
+    {
+        var match = pattern.Match(expression);
+        if (match.Success)
         {
-            var match = pattern.Match(expression);
-            if (match.Success)
-            {
-                binding.Properties[propertyName] = match.Groups[1].Value.Trim();
-            }
+            var value = match.Groups[1].Value.Trim();
+            // Clean up common artifacts
+            value = value.TrimEnd(',', '}').Trim();
+            binding.Properties[propertyName] = value;
+        }
+    }
+
+    /// <summary>
+    /// Extracts converter property, handling both simple values and StaticResource references.
+    /// </summary>
+    private void ExtractConverterProperty(string expression, XamlBindingInfo binding)
+    {
+        // First try the StaticResource pattern
+        var converterResourceMatch = XamlBindingRegexPatterns.ConverterPattern.Match(expression);
+        if (converterResourceMatch.Success)
+        {
+            binding.Properties["Converter"] = $"{{StaticResource {converterResourceMatch.Groups[1].Value.Trim()}}}";
+            return;
+        }
+
+        // Then try simple converter pattern
+        var simpleConverterPattern = new Regex(@"Converter\s*=\s*([^,}]+)", RegexOptions.IgnoreCase);
+        var simpleMatch = simpleConverterPattern.Match(expression);
+        if (simpleMatch.Success)
+        {
+            var value = simpleMatch.Groups[1].Value.Trim();
+            value = value.TrimEnd(',', '}').Trim();
+            binding.Properties["Converter"] = value;
         }
     }
 
@@ -345,12 +374,19 @@ public class XamlBindingAnalyser
     /// </summary>
     private void ValidateResourceBinding(XamlBindingInfo binding, BindingValidationResult result)
     {
-        if (string.IsNullOrWhiteSpace(binding.ResourceKey))
+        // Check for missing resource key in multiple ways
+        var hasEmptyKey = string.IsNullOrWhiteSpace(binding.ResourceKey);
+        var hasEmptyPattern = binding.Expression.Contains("{StaticResource}") || 
+                             binding.Expression.Contains("{StaticResource }") ||
+                             binding.Expression.Contains("{DynamicResource}") ||
+                             binding.Expression.Contains("{DynamicResource }");
+
+        if (hasEmptyKey || hasEmptyPattern)
         {
             result.Severity = ValidationSeverity.Error;
             result.Messages.Add("Resource binding is missing a resource key");
         }
-        else if (binding.ResourceKey.Contains(" "))
+        else if (!string.IsNullOrWhiteSpace(binding.ResourceKey) && binding.ResourceKey.Contains(" "))
         {
             result.Severity = ValidationSeverity.Warning;
             result.Messages.Add("Resource key contains spaces, which may cause issues");
@@ -421,24 +457,30 @@ public class XamlBindingAnalyser
             result.Messages.Add("Very long binding expression may be difficult to maintain");
         }
 
-        // Check for common typos in property names
+        // Check for common typos in property names by examining the raw expression
         var commonTypos = new Dictionary<string, string>
         {
             { "Convertor", "Converter" },
-            { "ElementName", "ElementName" }, // This is correct, but check for common variations
-            { "Sorce", "Source" }
+            { "Sorce", "Source" },
+            { "Elemnent", "Element" }
         };
 
-        foreach (var property in binding.Properties.Keys)
+        foreach (var (typo, correct) in commonTypos)
         {
-            foreach (var (typo, correct) in commonTypos)
+            // Check both in properties and in the raw expression
+            if (binding.Properties.ContainsKey(typo) || 
+                binding.Expression.Contains(typo, StringComparison.OrdinalIgnoreCase))
             {
-                if (property.Equals(typo, StringComparison.OrdinalIgnoreCase) && !property.Equals(correct))
-                {
-                    result.Severity = ValidationSeverity.Error;
-                    result.Messages.Add($"Possible typo in property name: '{property}' should be '{correct}'");
-                }
+                result.Severity = ValidationSeverity.Error;
+                result.Messages.Add($"Possible typo in property name: '{typo}' should be '{correct}'");
             }
+        }
+
+        // Additional pattern-based typo detection in the raw expression
+        if (binding.Expression.Contains("Convertor=", StringComparison.OrdinalIgnoreCase))
+        {
+            result.Severity = ValidationSeverity.Error;
+            result.Messages.Add("Possible typo in property name: 'Convertor' should be 'Converter'");
         }
     }
 }

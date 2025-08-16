@@ -121,32 +121,40 @@ public class BasicDebugServiceTests
     }
 
     [TestMethod]
-    public async Task EvaluateExpressionAsync_AlwaysThrowsNotImplemented()
+    public async Task EvaluateExpressionAsync_WhenNoDebugger_ThrowsInvalidOperation()
     {
+        // Arrange
+        _mockVsService!.Setup(vs => vs.GetRunningInstancesAsync())
+            .ReturnsAsync(Array.Empty<VisualStudioInstance>());
+
         // Act & Assert
         try
         {
             await _debugService!.EvaluateExpressionAsync("someExpression");
-            Assert.Fail("Expected NotImplementedException");
+            Assert.Fail("Expected InvalidOperationException");
         }
-        catch (NotImplementedException)
+        catch (InvalidOperationException ex)
         {
-            // Expected exception
+            Assert.AreEqual("No active Visual Studio debugger found. Ensure Visual Studio is connected.", ex.Message);
         }
     }
 
     [TestMethod]
-    public async Task ModifyVariableAsync_AlwaysThrowsNotImplemented()
+    public async Task ModifyVariableAsync_WhenNoDebugger_ThrowsInvalidOperation()
     {
+        // Arrange
+        _mockVsService!.Setup(vs => vs.GetRunningInstancesAsync())
+            .ReturnsAsync(Array.Empty<VisualStudioInstance>());
+
         // Act & Assert
         try
         {
             await _debugService!.ModifyVariableAsync("varName", "newValue");
-            Assert.Fail("Expected NotImplementedException");
+            Assert.Fail("Expected InvalidOperationException");
         }
-        catch (NotImplementedException)
+        catch (InvalidOperationException ex)
         {
-            // Expected exception
+            Assert.AreEqual("No active Visual Studio debugger found. Ensure Visual Studio is connected.", ex.Message);
         }
     }
 

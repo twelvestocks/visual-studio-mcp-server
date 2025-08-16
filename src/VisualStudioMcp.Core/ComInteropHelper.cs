@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging;
+using VisualStudioMcp.Core.Monitoring;
 
 namespace VisualStudioMcp.Core;
 
@@ -262,17 +263,20 @@ public static class ComInteropHelper
         string operationName,
         int timeoutMs = 30000)
     {
-        using var cts = new CancellationTokenSource(timeoutMs);
+        using var cts = new CancellationTokenSource();
+        var task = Task.Run(() => SafeComOperation(operation, logger, operationName), cts.Token);
+        var delayTask = Task.Delay(timeoutMs); // Don't pass cancellation token to delay
         
-        try
+        var completedTask = await Task.WhenAny(task, delayTask).ConfigureAwait(false);
+        
+        if (completedTask == delayTask)
         {
-            return await Task.Run(() => SafeComOperation(operation, logger, operationName), cts.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
-        {
+            cts.Cancel(); // Cancel the operation task
             logger.LogError("COM operation {OperationName} timed out after {TimeoutMs}ms", operationName, timeoutMs);
             throw new ComInteropException($"COM operation '{operationName}' timed out after {timeoutMs}ms");
         }
+        
+        return await task.ConfigureAwait(false);
     }
 
     /// <summary>

@@ -30,7 +30,7 @@ public class XamlParser
     /// </summary>
     /// <param name="xamlFilePath">Path to the XAML file.</param>
     /// <returns>Array of visual tree elements.</returns>
-    public async Task<XamlElement[]> ParseVisualTreeAsync(string xamlFilePath)
+    public virtual async Task<XamlElement[]> ParseVisualTreeAsync(string xamlFilePath)
     {
         _logger.LogInformation("Parsing visual tree from XAML file: {FilePath}", xamlFilePath);
 
@@ -205,7 +205,7 @@ public class XamlParser
     /// Invalidates the cache for a specific XAML file.
     /// </summary>
     /// <param name="xamlFilePath">Path to the XAML file to invalidate.</param>
-    public void InvalidateCache(string xamlFilePath)
+    public virtual void InvalidateCache(string xamlFilePath)
     {
         lock (_cacheLock)
         {
@@ -357,17 +357,26 @@ public class XamlParser
                 continue;
 
             var propertyName = attribute.Name.LocalName;
-            if (!string.IsNullOrEmpty(attribute.Name.Namespace.NamespaceName))
+            
+            // Handle common XAML namespace with x: prefix
+            if (attribute.Name.Namespace.NamespaceName == "http://schemas.microsoft.com/winfx/2006/xaml")
             {
+                propertyName = $"x:{propertyName}";
+            }
+            else if (!string.IsNullOrEmpty(attribute.Name.Namespace.NamespaceName))
+            {
+                // For other namespaces, use the full namespace URI
                 propertyName = $"{attribute.Name.Namespace.NamespaceName}:{propertyName}";
             }
 
             xamlElement.Properties[propertyName] = attribute.Value;
         }
 
-        // Set special properties
-        if (xamlElement.Properties.TryGetValue("Name", out var nameValue) || 
-            xamlElement.Properties.TryGetValue("x:Name", out nameValue))
+        // Set special properties - check both Name and x:Name
+        var nameValue = xamlElement.Properties.GetValueOrDefault("Name") ?? 
+                       xamlElement.Properties.GetValueOrDefault("x:Name");
+        
+        if (!string.IsNullOrEmpty(nameValue))
         {
             xamlElement.ElementName = nameValue;
         }
@@ -388,8 +397,9 @@ public class XamlParser
     {
         try
         {
-            // Check Name and x:Name attributes
-            var nameAttr = element.Attribute("Name")?.Value ?? element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value;
+            // Check Name and x:Name attributes properly
+            var nameAttr = element.Attribute("Name")?.Value ?? 
+                          element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value;
             
             if (!string.IsNullOrEmpty(nameAttr) && nameAttr.Equals(targetName, StringComparison.OrdinalIgnoreCase))
             {
