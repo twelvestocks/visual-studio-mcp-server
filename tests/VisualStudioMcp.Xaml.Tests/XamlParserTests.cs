@@ -56,7 +56,7 @@ public class XamlParserTests
 
         // Assert
         Assert.IsNotNull(elements);
-        Assert.AreEqual(5, elements.Length); // Window, Grid, Button, TextBox, Label, Button
+        Assert.AreEqual(6, elements.Length); // Window, Grid, Button, TextBox, Label, Button
         
         var windowElement = elements.First(e => e.ElementType == "Window");
         Assert.AreEqual("Window", windowElement.Name);

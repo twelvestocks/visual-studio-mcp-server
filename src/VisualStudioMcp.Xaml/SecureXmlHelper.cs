@@ -102,12 +102,42 @@ public static class SecureXmlHelper
 
         try
         {
-            // Get the full path to resolve any relative path components
-            var fullPath = Path.GetFullPath(filePath);
-            
-            // Check for dangerous path characters
-            if (fullPath.Contains("..") || fullPath.Contains("~"))
+            // Check for dangerous path characters in the original input first
+            if (string.IsNullOrWhiteSpace(filePath))
                 return false;
+                
+            // Reject exact "." (current directory reference) but allow paths like ".\file.txt"
+            if (filePath == ".")
+                return false;
+                
+            // Check for path traversal patterns and suspicious filenames
+            var pathParts = filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (var part in pathParts)
+            {
+                // Reject ".." path component (path traversal)
+                if (part == "..")
+                    return false;
+                    
+                // Reject "~" characters anywhere
+                if (part.Contains("~"))
+                    return false;
+                    
+                // Reject ".." in filenames (but allow "." directory reference)
+                if (part != "." && part.Contains(".."))
+                    return false;
+            }
+                
+            // Get the full path to resolve any relative path components
+            string fullPath;
+            if (!string.IsNullOrEmpty(allowedDirectory) && !Path.IsPathFullyQualified(filePath))
+            {
+                // If we have an allowed directory and the path is relative, resolve relative to the allowed directory
+                fullPath = Path.GetFullPath(Path.Combine(allowedDirectory, filePath));
+            }
+            else
+            {
+                fullPath = Path.GetFullPath(filePath);
+            }
                 
             // If an allowed directory is specified, ensure the file is within it
             if (!string.IsNullOrEmpty(allowedDirectory))
@@ -151,9 +181,13 @@ public static class SecureXmlHelper
         if (filePath == null)
             throw new ArgumentNullException(nameof(filePath));
 
-        if (!IsFilePathSafe(filePath, allowedDirectory))
+        var isSafe = IsFilePathSafe(filePath, allowedDirectory);
+        if (!isSafe)
         {
-            throw new UnauthorizedAccessException($"File path is not safe for access: {filePath}");
+            // Add some debugging info for the failing test
+            var parts = filePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var debugInfo = string.Join(", ", parts.Select((p, i) => $"[{i}]='{p}'"));
+            throw new UnauthorizedAccessException($"File path is not safe for access: {filePath} (parts: {debugInfo})");
         }
 
         return Path.GetFullPath(filePath);

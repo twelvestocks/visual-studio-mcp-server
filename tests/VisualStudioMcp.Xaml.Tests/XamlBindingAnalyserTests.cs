@@ -442,4 +442,5 @@ public class XamlBindingAnalyserTests
         var invalidRelativeSource = validationResults.Where(r => r.Binding.Expression.Contains("InvalidType"));
         Assert.IsTrue(invalidRelativeSource.Any(r => r.Severity == ValidationSeverity.Warning));
     }
+
 }

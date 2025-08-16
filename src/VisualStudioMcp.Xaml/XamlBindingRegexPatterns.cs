@@ -13,19 +13,19 @@ internal static class XamlBindingRegexPatterns
 
     /// <summary>
     /// Matches StaticResource binding expressions like "{StaticResource ResourceKey}".
-    /// Captures the resource key in group 1.
+    /// Captures the resource key in group 1 (may be empty).
     /// </summary>
     public static readonly Regex StaticResourcePattern = new(
-        @"\{StaticResource\s+([^}]+)\}",
+        @"\{StaticResource\s*([^}]*)\}",
         DefaultOptions,
         TimeSpan.FromSeconds(1)); // Prevent ReDoS attacks with timeout
 
     /// <summary>
     /// Matches DynamicResource binding expressions like "{DynamicResource ResourceKey}".
-    /// Captures the resource key in group 1.
+    /// Captures the resource key in group 1 (may be empty).
     /// </summary>
     public static readonly Regex DynamicResourcePattern = new(
-        @"\{DynamicResource\s+([^}]+)\}",
+        @"\{DynamicResource\s*([^}]*)\}",
         DefaultOptions,
         TimeSpan.FromSeconds(1));
 
@@ -43,7 +43,7 @@ internal static class XamlBindingRegexPatterns
     /// Captures the property name in group 1 when no equals sign is present.
     /// </summary>
     public static readonly Regex SimpleBindingPattern = new(
-        @"\{(?:x:)?Binding\s+([^,}]+)",
+        @"\{(?:x:)?[Bb]ind(?:ing)?\s+([^,}]+)",
         DefaultOptions,
         TimeSpan.FromSeconds(1));
 
@@ -110,7 +110,7 @@ internal static class XamlBindingRegexPatterns
     /// Captures the trigger value in group 1.
     /// </summary>
     public static readonly Regex UpdateSourceTriggerPattern = new(
-        @"UpdateSourceTrigger\s*=\s*([^,}]+)",
+        @"UpdateSourceTrigger\s*=\s*([^,}]*?)(?=\s*[,}]|$)",
         DefaultOptions,
         TimeSpan.FromSeconds(1));
 
@@ -135,9 +135,10 @@ internal static class XamlBindingRegexPatterns
     /// <summary>
     /// Comprehensive pattern to identify any binding expression type.
     /// Matches {Binding}, {StaticResource}, {DynamicResource}, {RelativeSource}, {x:Bind}.
+    /// Handles nested braces correctly.
     /// </summary>
     public static readonly Regex AnyBindingPattern = new(
-        @"\{(?:(?:x:)?Binding|StaticResource|DynamicResource|RelativeSource|x:Bind)\b[^}]*\}",
+        @"\{(?:(?:x:)?Binding|StaticResource|DynamicResource|RelativeSource|x:Bind)\b(?:[^{}]*(?:\{[^}]*\}[^{}]*)*)*\}",
         DefaultOptions,
         TimeSpan.FromSeconds(2)); // Slightly longer timeout for complex pattern
 

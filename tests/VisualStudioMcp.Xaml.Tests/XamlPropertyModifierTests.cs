@@ -19,6 +19,10 @@ public class XamlPropertyModifierTests
         _mockLogger = new Mock<ILogger<XamlPropertyModifier>>();
         var mockParserLogger = new Mock<ILogger<XamlParser>>();
         _mockParser = new Mock<XamlParser>(mockParserLogger.Object);
+        
+        // Setup the InvalidateCache method to do nothing (no-op)
+        _mockParser.Setup(p => p.InvalidateCache(It.IsAny<string>()));
+        
         _modifier = new XamlPropertyModifier(_mockLogger.Object, _mockParser.Object);
         
         _testXamlFilePath = Path.Combine(Path.GetTempPath(), $"test_modifier_{Guid.NewGuid():N}.xaml");

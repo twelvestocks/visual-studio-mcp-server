@@ -15,7 +15,7 @@ public class ComInteropExceptionTests
 
         // Assert
         Assert.IsNotNull(exception);
-        Assert.IsNull(exception.Message);
+        Assert.IsNotNull(exception.Message); // Exception base class provides default message
         Assert.IsNull(exception.InnerException);
         Assert.IsNull(exception.HResult);
         Assert.IsFalse(exception.IsRetryable);

@@ -5,6 +5,7 @@ using EnvDTE;
 using EnvDTE80;
 using Microsoft.Extensions.Logging;
 using VisualStudioMcp.Shared.Models;
+using VisualStudioMcp.Shared.Validation;
 
 namespace VisualStudioMcp.Core;
 
@@ -220,6 +221,13 @@ public class VisualStudioService : IVisualStudioService
 
     public async Task<VisualStudioInstance> ConnectToInstanceAsync(int processId)
     {
+        // Validate process ID
+        var validationResult = InputValidationHelper.ValidateProcessId(processId, requireVisualStudio: true);
+        if (!validationResult.IsValid)
+        {
+            throw new ArgumentException(validationResult.ErrorMessage ?? "Invalid process ID", nameof(processId));
+        }
+        
         _logger.LogInformation("Connecting to Visual Studio instance with PID: {ProcessId}", processId);
 
         return await Task.Run(() =>
@@ -352,10 +360,16 @@ public class VisualStudioService : IVisualStudioService
 
     public async Task<BuildResult> BuildSolutionAsync(string configuration = "Debug")
     {
-        _logger.LogInformation("Building solution with configuration: {Configuration}", configuration);
+        // Validate and sanitize configuration
+        var validationResult = InputValidationHelper.ValidateBuildConfiguration(configuration);
+        if (!validationResult.IsValid)
+        {
+            throw new ArgumentException(validationResult.ErrorMessage ?? "Invalid configuration", nameof(configuration));
+        }
         
-        if (string.IsNullOrWhiteSpace(configuration))
-            throw new ArgumentException("Configuration cannot be null or empty", nameof(configuration));
+        // Use validated configuration (which includes default handling)
+        var validatedConfiguration = validationResult.ValidatedValue?.ToString() ?? "Debug";
+        _logger.LogInformation("Building solution with configuration: {Configuration}", validatedConfiguration);
 
         return await Task.Run(() =>
         {
@@ -376,7 +390,7 @@ public class VisualStudioService : IVisualStudioService
                     var startTime = DateTime.UtcNow;
                     var buildResult = new BuildResult
                     {
-                        Configuration = configuration
+                        Configuration = validatedConfiguration
                     };
 
                     try
@@ -388,7 +402,7 @@ public class VisualStudioService : IVisualStudioService
                         var foundConfig = false;
                         foreach (SolutionConfiguration config in solutionBuild.SolutionConfigurations)
                         {
-                            if (config.Name.Equals(configuration, StringComparison.OrdinalIgnoreCase))
+                            if (config.Name.Equals(validatedConfiguration, StringComparison.OrdinalIgnoreCase))
                             {
                                 config.Activate();
                                 foundConfig = true;
@@ -398,7 +412,7 @@ public class VisualStudioService : IVisualStudioService
 
                         if (!foundConfig)
                         {
-                            _logger.LogWarning("Configuration '{Configuration}' not found, using current active configuration", configuration);
+                            _logger.LogWarning("Configuration '{Configuration}' not found, using current active configuration", validatedConfiguration);
                         }
 
                         // Clear error list before building
