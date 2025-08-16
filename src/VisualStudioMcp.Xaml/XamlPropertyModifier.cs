@@ -208,28 +208,42 @@ public class XamlPropertyModifier
             }
 
             // Find elements with matching name and add properties
-            var modifiedCount = AddPropertyToElementsInDocument(document, elementName, propertyName, propertyValue);
+            var (modifiedCount, elementFound) = AddPropertyToElementsInDocument(document, elementName, propertyName, propertyValue);
 
+            if (!elementFound)
+            {
+                _logger.LogWarning("No elements found with name '{ElementName}' in file: {FilePath}", elementName, xamlFilePath);
+                return false;
+            }
+
+            // Always return true if elements were found, regardless of whether modifications were made
             if (modifiedCount > 0)
             {
                 // Save the modified document back to file
                 await SaveDocumentSafelyAsync(document, xamlFilePath).ConfigureAwait(false);
                 
                 // Invalidate parser cache for this file
-                _xamlParser.InvalidateCache(xamlFilePath);
+                try
+                {
+                    _xamlParser.InvalidateCache(xamlFilePath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to invalidate cache for file: {FilePath}", xamlFilePath);
+                }
 
                 _logger.LogInformation("Successfully added property to {Count} elements in file: {FilePath}", modifiedCount, xamlFilePath);
-                return true;
             }
             else
             {
-                _logger.LogWarning("No elements found with name '{ElementName}' in file: {FilePath}", elementName, xamlFilePath);
-                return false;
+                _logger.LogInformation("Property '{PropertyName}' already exists on element '{ElementName}', no changes made", propertyName, elementName);
             }
+
+            return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error adding element property in file: {FilePath}", xamlFilePath);
+            _logger.LogError(ex, "Error adding element property in file: {FilePath}. Exception: {Exception}", xamlFilePath, ex.ToString());
             return false;
         }
     }
@@ -320,6 +334,14 @@ public class XamlPropertyModifier
             }
 
             var backupPath = $"{xamlFilePath}.backup.{DateTime.Now:yyyyMMddHHmmss}";
+            
+            // Ensure the directory exists for the backup
+            var backupDir = Path.GetDirectoryName(backupPath);
+            if (!string.IsNullOrEmpty(backupDir) && !Directory.Exists(backupDir))
+            {
+                Directory.CreateDirectory(backupDir);
+            }
+            
             File.Copy(xamlFilePath, backupPath);
             
             _logger.LogInformation("Created backup: {BackupPath}", backupPath);
@@ -394,9 +416,11 @@ public class XamlPropertyModifier
     /// <summary>
     /// Adds a property to elements in the document.
     /// </summary>
-    private int AddPropertyToElementsInDocument(XDocument document, string elementName, string propertyName, string propertyValue)
+    /// <returns>A tuple containing the number of modified elements and whether any target elements were found.</returns>
+    private (int modifiedCount, bool elementFound) AddPropertyToElementsInDocument(XDocument document, string elementName, string propertyName, string propertyValue)
     {
         var modifiedCount = 0;
+        var elementFound = false;
 
         try
         {
@@ -404,6 +428,7 @@ public class XamlPropertyModifier
 
             foreach (var element in elements)
             {
+                elementFound = true;
                 var attributeName = GetAttributeName(propertyName);
                 
                 // Only add if property doesn't already exist
@@ -427,7 +452,7 @@ public class XamlPropertyModifier
             _logger.LogWarning(ex, "Error adding properties to elements: {ElementName}", elementName);
         }
 
-        return modifiedCount;
+        return (modifiedCount, elementFound);
     }
 
     /// <summary>
@@ -479,11 +504,13 @@ public class XamlPropertyModifier
     /// </summary>
     private void FindElementsByNameRecursive(XElement element, string targetName, List<XElement> results)
     {
-        // Check Name and x:Name attributes
-        var nameAttr = element.Attribute("Name")?.Value ?? 
-                      element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value;
+        // Check both Name and x:Name attributes
+        var nameAttr = element.Attribute("Name")?.Value;
+        var xNameAttr = element.Attribute(XName.Get("Name", "http://schemas.microsoft.com/winfx/2006/xaml"))?.Value;
+        
+        var elementName = nameAttr ?? xNameAttr;
 
-        if (!string.IsNullOrEmpty(nameAttr) && nameAttr.Equals(targetName, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(elementName) && elementName.Equals(targetName, StringComparison.OrdinalIgnoreCase))
         {
             results.Add(element);
         }
@@ -545,8 +572,16 @@ public class XamlPropertyModifier
     {
         try
         {
-            // Create backup before saving
-            var backupPath = await CreateBackupAsync(filePath).ConfigureAwait(false);
+            // Create backup before saving (skip if it fails)
+            string? backupPath = null;
+            try
+            {
+                backupPath = await CreateBackupAsync(filePath).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create backup for file: {FilePath}, proceeding without backup", filePath);
+            }
             
             // Configure save options for clean formatting
             var saveOptions = SaveOptions.None; // Preserve formatting
@@ -556,11 +591,14 @@ public class XamlPropertyModifier
             
             try
             {
-                using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                using var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8);
-                
-                document.Save(streamWriter, saveOptions);
-                await streamWriter.FlushAsync().ConfigureAwait(false);
+                // Save to temporary file with explicit disposal
+                {
+                    using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    using var streamWriter = new StreamWriter(fileStream, System.Text.Encoding.UTF8);
+                    
+                    document.Save(streamWriter, saveOptions);
+                    await streamWriter.FlushAsync().ConfigureAwait(false);
+                }
                 
                 // Atomically replace the original file
                 File.Move(tempPath, filePath, overwrite: true);
