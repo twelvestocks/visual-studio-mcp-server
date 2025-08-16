@@ -22,9 +22,11 @@ param(
 
 # Script configuration
 $ErrorActionPreference = "Stop"
-$ProjectFile = "src\VisualStudioMcp.Server\VisualStudioMcp.Server.csproj"
-$SolutionFile = "VisualStudioMcp.sln"
-$ChangelogFile = "CHANGELOG.md"
+$ScriptRoot = $PSScriptRoot
+if (-not $ScriptRoot) { $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$ProjectFile = Join-Path $ScriptRoot "..\src\VisualStudioMcp.Server\VisualStudioMcp.Server.csproj"
+$SolutionFile = Join-Path $ScriptRoot "..\VisualStudioMcp.sln"
+$ChangelogFile = Join-Path $ScriptRoot "..\CHANGELOG.md"
 
 Write-Host "🚀 Visual Studio MCP Server - Release Management" -ForegroundColor Cyan
 Write-Host "=================================================" -ForegroundColor Cyan
@@ -34,11 +36,105 @@ if ($DryRun) {
 }
 
 # =====================================
+# Security Functions
+# =====================================
+
+function Test-SafeInput {
+    param(
+        [string]$InputValue,
+        [string]$Pattern,
+        [string]$ParameterName,
+        [int]$MaxLength = 100
+    )
+    
+    # Check for null or empty
+    if ([string]::IsNullOrWhiteSpace($InputValue)) {
+        Write-Error "Parameter '$ParameterName' cannot be null or empty"
+        return $false
+    }
+    
+    # Check maximum length
+    if ($InputValue.Length -gt $MaxLength) {
+        Write-Error "Parameter '$ParameterName' exceeds maximum length of $MaxLength characters"
+        return $false
+    }
+    
+    # Check pattern match
+    if ($InputValue -notmatch $Pattern) {
+        Write-Error "Parameter '$ParameterName' contains invalid characters or format. Value: $InputValue"
+        return $false
+    }
+    
+    # Check for dangerous characters
+    $dangerousChars = @('&', '|', ';', '$', '`', '<', '>', '"', "'", '\', '..', '~')
+    foreach ($char in $dangerousChars) {
+        if ($InputValue.Contains($char)) {
+            Write-Error "Parameter '$ParameterName' contains dangerous character: $char"
+            return $false
+        }
+    }
+    
+    return $true
+}
+
+function Invoke-SecureRegexReplace {
+    param(
+        [string]$Content,
+        [string]$Pattern,
+        [string]$Replacement
+    )
+    
+    # Escape the replacement string to prevent regex injection
+    $safeReplacement = [regex]::Escape($Replacement)
+    # But we need to unescape the literal parts we want
+    $safeReplacement = $safeReplacement -replace '\\<', '<' -replace '\\>', '>'
+    
+    return $Content -replace $Pattern, $safeReplacement
+}
+
+function Test-SecurePath {
+    param([string]$Path)
+    
+    # Check for path traversal attempts
+    if ($Path -match '\.\.' -or $Path -match '/\.\.' -or $Path -match '\\\.\.') {
+        Write-Error "Path contains directory traversal attempt: $Path"
+        return $false
+    }
+    
+    # Ensure path is within expected boundaries
+    $resolvedPath = Resolve-Path $Path -ErrorAction SilentlyContinue
+    if (-not $resolvedPath) {
+        Write-Error "Invalid or non-existent path: $Path"
+        return $false
+    }
+    
+    return $true
+}
+
+# =====================================
 # Validation Functions
 # =====================================
 
 function Test-Prerequisites {
     Write-Host "📋 Checking prerequisites..." -ForegroundColor Yellow
+    
+    # Validate input parameters for security
+    if (-not (Test-SafeInput -InputValue $Version -Pattern '^\d+\.\d+\.\d+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$' -ParameterName "Version" -MaxLength 50)) {
+        exit 1
+    }
+    
+    if (-not (Test-SafeInput -InputValue $Branch -Pattern '^[a-zA-Z0-9/_-]+$' -ParameterName "Branch" -MaxLength 100)) {
+        exit 1
+    }
+    
+    # Validate file paths
+    if (-not (Test-SecurePath -Path $ProjectFile)) {
+        exit 1
+    }
+    
+    if (-not (Test-SecurePath -Path $SolutionFile)) {
+        exit 1
+    }
     
     # Check required tools
     $requiredTools = @('git', 'dotnet', 'gh')
@@ -97,10 +193,10 @@ function Update-ProjectVersion {
     }
     
     $content = Get-Content $ProjectFile -Raw
-    $content = $content -replace '<Version>.*?</Version>', "<Version>$NewVersion</Version>"
-    $content = $content -replace '<AssemblyVersion>.*?</AssemblyVersion>', "<AssemblyVersion>$NewVersion.0</AssemblyVersion>"
-    $content = $content -replace '<FileVersion>.*?</FileVersion>', "<FileVersion>$NewVersion.0</FileVersion>"
-    $content = $content -replace '<InformationalVersion>.*?</InformationalVersion>', "<InformationalVersion>$NewVersion</InformationalVersion>"
+    $content = Invoke-SecureRegexReplace -Content $content -Pattern '<Version>.*?</Version>' -Replacement "<Version>$NewVersion</Version>"
+    $content = Invoke-SecureRegexReplace -Content $content -Pattern '<AssemblyVersion>.*?</AssemblyVersion>' -Replacement "<AssemblyVersion>$NewVersion.0</AssemblyVersion>"
+    $content = Invoke-SecureRegexReplace -Content $content -Pattern '<FileVersion>.*?</FileVersion>' -Replacement "<FileVersion>$NewVersion.0</FileVersion>"
+    $content = Invoke-SecureRegexReplace -Content $content -Pattern '<InformationalVersion>.*?</InformationalVersion>' -Replacement "<InformationalVersion>$NewVersion</InformationalVersion>"
     
     Set-Content $ProjectFile -Value $content
     Write-Host "✅ Project version updated" -ForegroundColor Green
@@ -217,14 +313,27 @@ function New-GitTag {
         return
     }
     
-    # Commit version changes
-    git add $ProjectFile $ChangelogFile
-    git commit -m "chore: bump version to $TagVersion"
+    # Validate inputs for Git operations
+    if (-not (Test-SafeInput -InputValue $TagVersion -Pattern '^\d+\.\d+\.\d+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$' -ParameterName "TagVersion" -MaxLength 50)) {
+        exit 1
+    }
     
-    # Create and push tag
-    git tag -a $tagName -m $tagMessage
-    git push origin $Branch
-    git push origin $tagName
+    # Commit version changes using secure parameters
+    & git add $ProjectFile $ChangelogFile
+    if ($LASTEXITCODE -ne 0) { Write-Error "Git add failed"; exit 1 }
+    
+    & git commit -m "chore: bump version to $TagVersion"
+    if ($LASTEXITCODE -ne 0) { Write-Error "Git commit failed"; exit 1 }
+    
+    # Create and push tag using secure parameters
+    & git tag -a $tagName -m $tagMessage
+    if ($LASTEXITCODE -ne 0) { Write-Error "Git tag failed"; exit 1 }
+    
+    & git push origin $Branch
+    if ($LASTEXITCODE -ne 0) { Write-Error "Git push branch failed"; exit 1 }
+    
+    & git push origin $tagName
+    if ($LASTEXITCODE -ne 0) { Write-Error "Git push tag failed"; exit 1 }
     
     Write-Host "✅ Git tag created and pushed" -ForegroundColor Green
 }
