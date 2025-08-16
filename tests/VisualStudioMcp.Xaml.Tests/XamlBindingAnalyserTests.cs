@@ -349,16 +349,30 @@ public class XamlBindingAnalyserTests
         var parser = new Mock<XamlParser>(mockParserLogger.Object);
 
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlBindingAnalyser(null!, parser.Object));
+        try
+        {
+            new XamlBindingAnalyser(null!, parser.Object);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
     public void Constructor_NullParser_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlBindingAnalyser(_mockLogger.Object, null!));
+        try
+        {
+            new XamlBindingAnalyser(_mockLogger.Object, null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

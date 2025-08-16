@@ -195,8 +195,15 @@ public class SecureXmlHelperTests
     public void LoadXamlFileSecurely_NullFilePath_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            SecureXmlHelper.LoadXamlFileSecurely(null!));
+        try
+        {
+            SecureXmlHelper.LoadXamlFileSecurely(null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -206,8 +213,15 @@ public class SecureXmlHelperTests
         var nonExistentPath = Path.Combine(_testDirectory, "nonexistent.xaml");
 
         // Act & Assert
-        Assert.ThrowsException<FileNotFoundException>(() => 
-            SecureXmlHelper.LoadXamlFileSecurely(nonExistentPath));
+        try
+        {
+            SecureXmlHelper.LoadXamlFileSecurely(nonExistentPath);
+            Assert.Fail("Expected FileNotFoundException was not thrown");
+        }
+        catch (FileNotFoundException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -218,8 +232,15 @@ public class SecureXmlHelperTests
         File.WriteAllText(_testXamlFilePath, malformedXaml);
 
         // Act & Assert
-        Assert.ThrowsException<XmlException>(() => 
-            SecureXmlHelper.LoadXamlFileSecurely(_testXamlFilePath));
+        try
+        {
+            SecureXmlHelper.LoadXamlFileSecurely(_testXamlFilePath);
+            Assert.Fail("Expected XmlException was not thrown");
+        }
+        catch (XmlException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -312,8 +333,15 @@ public class SecureXmlHelperTests
     public void IsFilePathSafe_NullPath_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            SecureXmlHelper.IsFilePathSafe(null!));
+        try
+        {
+            SecureXmlHelper.IsFilePathSafe(null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -338,16 +366,30 @@ public class SecureXmlHelperTests
         var unsafePath = "../../../etc/passwd";
 
         // Act & Assert
-        Assert.ThrowsException<UnauthorizedAccessException>(() => 
-            SecureXmlHelper.ValidateAndNormalizePath(unsafePath));
+        try
+        {
+            SecureXmlHelper.ValidateAndNormalizePath(unsafePath);
+            Assert.Fail("Expected UnauthorizedAccessException was not thrown");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
     public void ValidateAndNormalizePath_NullPath_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            SecureXmlHelper.ValidateAndNormalizePath(null!));
+        try
+        {
+            SecureXmlHelper.ValidateAndNormalizePath(null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -402,8 +444,15 @@ public class SecureXmlHelperTests
         var excessivelyLargeXaml = baseXaml + largeString + endXaml;
 
         // Act & Assert
-        Assert.ThrowsException<XmlException>(() => 
-            SecureXmlHelper.ParseXamlSecurely(excessivelyLargeXaml));
+        try
+        {
+            SecureXmlHelper.ParseXamlSecurely(excessivelyLargeXaml);
+            Assert.Fail("Expected XmlException was not thrown");
+        }
+        catch (XmlException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

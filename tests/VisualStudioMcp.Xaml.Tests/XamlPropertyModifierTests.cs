@@ -425,16 +425,30 @@ public class XamlPropertyModifierTests
         var parser = new Mock<XamlParser>(mockParserLogger.Object);
 
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlPropertyModifier(null!, parser.Object));
+        try
+        {
+            new XamlPropertyModifier(null!, parser.Object);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
     public void Constructor_NullParser_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlPropertyModifier(_mockLogger.Object, null!));
+        try
+        {
+            new XamlPropertyModifier(_mockLogger.Object, null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

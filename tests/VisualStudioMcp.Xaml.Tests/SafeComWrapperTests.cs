@@ -165,8 +165,15 @@ public class SafeComWrapperTests
         using var wrapper = new SafeComWrapper<ITestComObject>(mockComObject, _mockLogger.Object);
 
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            wrapper.Execute((Func<ITestComObject, string>)null!));
+        try
+        {
+            wrapper.Execute((Func<ITestComObject, string>)null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -178,8 +185,15 @@ public class SafeComWrapperTests
         wrapper.Dispose();
 
         // Act & Assert
-        Assert.ThrowsException<ObjectDisposedException>(() => 
-            wrapper.Execute(obj => obj.GetValue()));
+        try
+        {
+            wrapper.Execute(obj => obj.GetValue());
+            Assert.Fail("Expected ObjectDisposedException was not thrown");
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -193,8 +207,16 @@ public class SafeComWrapperTests
         using var wrapper = new SafeComWrapper<ITestComObject>(mockComObject.Object, _mockLogger.Object);
 
         // Act & Assert
-        var thrownException = Assert.ThrowsException<COMException>(() => 
-            wrapper.Execute(obj => obj.GetValue()));
+        COMException thrownException = null!;
+        try
+        {
+            wrapper.Execute(obj => obj.GetValue());
+            Assert.Fail("Expected COMException was not thrown");
+        }
+        catch (COMException ex)
+        {
+            thrownException = ex;
+        }
 
         Assert.AreEqual(comException, thrownException);
     }
@@ -210,8 +232,16 @@ public class SafeComWrapperTests
         using var wrapper = new SafeComWrapper<ITestComObject>(mockComObject.Object, _mockLogger.Object);
 
         // Act & Assert
-        var thrownException = Assert.ThrowsException<InvalidOperationException>(() => 
-            wrapper.Execute(obj => obj.GetValue()));
+        InvalidOperationException thrownException = null!;
+        try
+        {
+            wrapper.Execute(obj => obj.GetValue());
+            Assert.Fail("Expected InvalidOperationException was not thrown");
+        }
+        catch (InvalidOperationException ex)
+        {
+            thrownException = ex;
+        }
 
         Assert.AreEqual(generalException, thrownException);
     }
@@ -225,8 +255,15 @@ public class SafeComWrapperTests
         wrapper.Dispose();
 
         // Act & Assert
-        Assert.ThrowsException<ObjectDisposedException>(() => 
-            { var _ = wrapper.ComObject; });
+        try
+        {
+            var _ = wrapper.ComObject;
+            Assert.Fail("Expected ObjectDisposedException was not thrown");
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -545,8 +582,15 @@ public class SafeDteWrapperTests
         wrapper.Dispose();
 
         // Act & Assert
-        Assert.ThrowsException<ObjectDisposedException>(() => 
-            { var _ = wrapper.Dte; });
+        try
+        {
+            var _ = wrapper.Dte;
+            Assert.Fail("Expected ObjectDisposedException was not thrown");
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -557,8 +601,15 @@ public class SafeDteWrapperTests
         wrapper.Dispose();
 
         // Act & Assert
-        Assert.ThrowsException<ObjectDisposedException>(() => 
-            wrapper.Execute(dte => dte.Version));
+        try
+        {
+            wrapper.Execute(dte => dte.Version);
+            Assert.Fail("Expected ObjectDisposedException was not thrown");
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]

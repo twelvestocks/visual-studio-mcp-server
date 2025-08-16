@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using VisualStudioMcp.Core;
+using VisualStudioMcp.Shared.Models;
 
 namespace VisualStudioMcp.Xaml.Tests;
 
@@ -37,7 +38,7 @@ public class XamlWindowManagerTests
             {
                 ProcessId = processId,
                 Version = "17.0",
-                DisplayName = "Visual Studio 2022"
+                SolutionName = "TestSolution.sln"
             }
         };
 
@@ -94,7 +95,7 @@ public class XamlWindowManagerTests
             {
                 ProcessId = processId,
                 Version = "17.0",
-                DisplayName = "Visual Studio 2022"
+                SolutionName = "TestSolution.sln"
             }
         };
 
@@ -147,7 +148,7 @@ public class XamlWindowManagerTests
             {
                 ProcessId = processId,
                 Version = "17.0",
-                DisplayName = "Visual Studio 2022"
+                SolutionName = "TestSolution.sln"
             }
         };
 
@@ -277,7 +278,7 @@ public class XamlWindowManagerTests
             {
                 ProcessId = processId,
                 Version = "17.0",
-                DisplayName = "Visual Studio 2022"
+                SolutionName = "TestSolution.sln"
             }
         };
 
@@ -313,16 +314,30 @@ public class XamlWindowManagerTests
     public void Constructor_NullLogger_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlWindowManager(null!, _mockVsService.Object));
+        try
+        {
+            new XamlWindowManager(null!, _mockVsService.Object);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
     public void Constructor_NullVsService_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Assert.ThrowsException<ArgumentNullException>(() => 
-            new XamlWindowManager(_mockLogger.Object, null!));
+        try
+        {
+            new XamlWindowManager(_mockLogger.Object, null!);
+            Assert.Fail("Expected ArgumentNullException was not thrown");
+        }
+        catch (ArgumentNullException)
+        {
+            // Expected exception
+        }
     }
 
     [TestMethod]
@@ -336,7 +351,7 @@ public class XamlWindowManagerTests
             {
                 ProcessId = processId,
                 Version = "17.0",
-                DisplayName = "Visual Studio 2022"
+                SolutionName = "TestSolution.sln"
             }
         };
 
