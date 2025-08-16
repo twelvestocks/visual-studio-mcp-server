@@ -1,0 +1,88 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ '**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  BUILD_CONFIGURATION: 'Release'
+
+jobs:
+  # =====================================
+  # Continuous Integration Job
+  # =====================================
+  ci:
+    name: 'CI Build & Test'
+    runs-on: windows-latest
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🔧 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: 📋 Environment info
+      run: |
+        Write-Host "🖥️  Runner: $env:RUNNER_OS"
+        Write-Host "🔧 .NET: $(dotnet --version)"
+        Write-Host "🌿 Branch: $env:GITHUB_REF_NAME"
+        Write-Host "📝 Commit: $($env:GITHUB_SHA.Substring(0,8))"
+      shell: pwsh
+    
+    - name: 📦 Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    
+    - name: 📥 Restore packages
+      run: dotnet restore VisualStudioMcp.sln --verbosity minimal
+    
+    - name: 🏗️ Build solution
+      run: |
+        dotnet build VisualStudioMcp.sln `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-restore `
+          --verbosity minimal
+    
+    - name: 🧪 Run tests
+      run: |
+        dotnet test VisualStudioMcp.sln `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-build `
+          --verbosity minimal `
+          --logger "console;verbosity=minimal"
+    
+    - name: 📦 Verify packaging
+      run: |
+        Write-Host "🧪 Testing global tool packaging..."
+        dotnet pack src\VisualStudioMcp.Server\VisualStudioMcp.Server.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-build `
+          --output .\test-package
+        
+        $package = Get-ChildItem .\test-package -Filter "*.nupkg" | Select-Object -First 1
+        if ($package) {
+          Write-Host "✅ Package created: $($package.Name)"
+          Write-Host "📊 Size: $([math]::Round($package.Length / 1KB, 2)) KB"
+        } else {
+          Write-Error "❌ Package creation failed"
+          exit 1
+        }
+      shell: pwsh
+    
+    - name: ✅ CI Success
+      run: |
+        Write-Host "🎉 Continuous Integration completed successfully!" -ForegroundColor Green
+        Write-Host "✅ Build: Passed" -ForegroundColor Green  
+        Write-Host "✅ Tests: Passed" -ForegroundColor Green
+        Write-Host "✅ Packaging: Verified" -ForegroundColor Green
+      shell: pwsh

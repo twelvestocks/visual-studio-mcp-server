@@ -1,0 +1,529 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      deploy_to_nuget:
+        description: 'Deploy to NuGet'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  BUILD_CONFIGURATION: 'Release'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  # =====================================
+  # Build and Test Job
+  # =====================================
+  build-and-test:
+    name: 'Build & Test'
+    runs-on: windows-latest
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Required for GitVersion
+    
+    - name: 🔧 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: 📋 Display environment info
+      run: |
+        Write-Host "🖥️  OS: $env:RUNNER_OS"
+        Write-Host "🔧 .NET Version: $(dotnet --version)"
+        Write-Host "📁 Working Directory: $pwd"
+        Write-Host "🌿 Branch: $env:GITHUB_REF_NAME"
+        Write-Host "📝 Commit: $env:GITHUB_SHA"
+      shell: pwsh
+    
+    - name: 📦 Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.NUGET_PACKAGES }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    
+    - name: 📥 Restore dependencies
+      run: dotnet restore VisualStudioMcp.sln --verbosity minimal
+    
+    - name: 🏗️ Build solution
+      run: |
+        dotnet build VisualStudioMcp.sln `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-restore `
+          --verbosity minimal `
+          /p:TreatWarningsAsErrors=false
+    
+    - name: 🧪 Run unit tests
+      run: |
+        dotnet test VisualStudioMcp.sln `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-build `
+          --verbosity minimal `
+          --logger "trx;LogFileName=test-results.trx" `
+          --logger "console;verbosity=minimal" `
+          --collect:"XPlat Code Coverage" `
+          --results-directory TestResults/
+    
+    - name: 📊 Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: TestResults/
+        retention-days: 30
+    
+    - name: 📈 Upload coverage reports
+      uses: codecov/codecov-action@v4
+      if: always()
+      with:
+        directory: TestResults/
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # =====================================
+  # Code Quality Analysis Job
+  # =====================================
+  code-quality:
+    name: 'Code Quality'
+    runs-on: windows-latest
+    needs: build-and-test
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 🔧 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: 📦 Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.NUGET_PACKAGES }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    
+    - name: 🔍 SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      if: env.SONAR_TOKEN != ''
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    
+    - name: 🛡️ Security scan with CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: 'csharp'
+        queries: security-and-quality
+    
+    - name: 📥 Restore and build for analysis
+      run: |
+        dotnet restore VisualStudioMcp.sln
+        dotnet build VisualStudioMcp.sln --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+    
+    - name: 🛡️ Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+
+  # =====================================
+  # Package Global Tool Job
+  # =====================================
+  package:
+    name: 'Package Global Tool'
+    runs-on: windows-latest
+    needs: [build-and-test, code-quality]
+    outputs:
+      package-version: ${{ steps.version.outputs.version }}
+      package-path: ${{ steps.package.outputs.package-path }}
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 🔧 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: 🏷️ Determine version
+      id: version
+      run: |
+        $version = "1.0.0"
+        
+        if ($env:GITHUB_REF -match "^refs/tags/v(.+)$") {
+          $version = $matches[1]
+          Write-Host "🏷️ Tag version detected: $version"
+        } elseif ($env:GITHUB_REF_NAME -eq "main") {
+          $buildNumber = $env:GITHUB_RUN_NUMBER
+          $version = "1.0.$buildNumber"
+          Write-Host "🌿 Main branch version: $version"
+        } elseif ($env:GITHUB_REF_NAME -eq "develop") {
+          $buildNumber = $env:GITHUB_RUN_NUMBER
+          $version = "1.0.$buildNumber-preview"
+          Write-Host "🌿 Develop branch version: $version"
+        } else {
+          $buildNumber = $env:GITHUB_RUN_NUMBER
+          $version = "1.0.$buildNumber-alpha"
+          Write-Host "🌿 Feature branch version: $version"
+        }
+        
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        Write-Host "✅ Version set to: $version"
+      shell: pwsh
+    
+    - name: 📦 Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.NUGET_PACKAGES }}
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.props') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+    
+    - name: 📥 Restore dependencies
+      run: dotnet restore VisualStudioMcp.sln
+    
+    - name: 🏗️ Build solution
+      run: |
+        dotnet build VisualStudioMcp.sln `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-restore `
+          /p:Version=${{ steps.version.outputs.version }} `
+          /p:AssemblyVersion=${{ steps.version.outputs.version }}.0 `
+          /p:FileVersion=${{ steps.version.outputs.version }}.0 `
+          /p:InformationalVersion=${{ steps.version.outputs.version }}
+    
+    - name: 📦 Pack global tool
+      id: package
+      run: |
+        $outputPath = ".\artifacts"
+        New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+        
+        dotnet pack src\VisualStudioMcp.Server\VisualStudioMcp.Server.csproj `
+          --configuration ${{ env.BUILD_CONFIGURATION }} `
+          --no-build `
+          --output $outputPath `
+          /p:Version=${{ steps.version.outputs.version }}
+        
+        $packageFile = Get-ChildItem $outputPath -Filter "VisualStudioMcp.*.nupkg" | Select-Object -First 1
+        if (!$packageFile) {
+          Write-Error "Package file not found"
+          exit 1
+        }
+        
+        $packagePath = $packageFile.FullName
+        echo "package-path=$packagePath" >> $env:GITHUB_OUTPUT
+        
+        Write-Host "✅ Package created: $($packageFile.Name)"
+        Write-Host "📍 Package path: $packagePath"
+        Write-Host "📊 Package size: $([math]::Round($packageFile.Length / 1KB, 2)) KB"
+      shell: pwsh
+    
+    - name: 🧪 Test global tool installation
+      run: |
+        Write-Host "🧪 Testing local installation..."
+        
+        # Uninstall existing version if present
+        $existingTool = dotnet tool list --global | Select-String "VisualStudioMcp"
+        if ($existingTool) {
+          dotnet tool uninstall --global VisualStudioMcp
+        }
+        
+        # Install from local package
+        dotnet tool install --global --add-source .\artifacts VisualStudioMcp
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Local installation failed"
+          exit 1
+        }
+        
+        # Test tool execution
+        $version = & vsmcp --version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Tool execution failed"
+          exit 1
+        }
+        
+        Write-Host "✅ Tool installation test successful: $version"
+      shell: pwsh
+    
+    - name: 📤 Upload package artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-package
+        path: artifacts/*.nupkg
+        retention-days: 90
+
+  # =====================================
+  # Deploy to NuGet Job
+  # =====================================
+  deploy-nuget:
+    name: 'Deploy to NuGet'
+    runs-on: windows-latest
+    needs: package
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_to_nuget)
+    environment: production
+    
+    steps:
+    - name: 📥 Download package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: artifacts/
+    
+    - name: 🔧 Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: 🚀 Deploy to NuGet
+      run: |
+        $packageFile = Get-ChildItem artifacts -Filter "VisualStudioMcp.*.nupkg" | Select-Object -First 1
+        if (!$packageFile) {
+          Write-Error "Package file not found in artifacts"
+          exit 1
+        }
+        
+        Write-Host "🚀 Deploying package: $($packageFile.Name)"
+        Write-Host "🌐 Target: https://api.nuget.org/v3/index.json"
+        
+        dotnet nuget push $packageFile.FullName `
+          --api-key $env:NUGET_API_KEY `
+          --source https://api.nuget.org/v3/index.json `
+          --timeout 300 `
+          --verbosity minimal
+        
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "NuGet deployment failed"
+          exit 1
+        }
+        
+        Write-Host "✅ Successfully deployed to NuGet!"
+        Write-Host "🌐 Package available at: https://www.nuget.org/packages/VisualStudioMcp/${{ needs.package.outputs.package-version }}"
+      shell: pwsh
+      env:
+        NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+  # =====================================
+  # Create GitHub Release Job  
+  # =====================================
+  create-release:
+    name: 'Create GitHub Release'
+    runs-on: windows-latest
+    needs: [package, deploy-nuget]
+    if: github.ref_type == 'tag' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    
+    steps:
+    - name: 🛒 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 📥 Download package artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: artifacts/
+    
+    - name: 📝 Generate release notes
+      id: release-notes
+      run: |
+        $version = "${{ needs.package.outputs.package-version }}"
+        $releaseNotes = @"
+        # Visual Studio MCP Server v$version
+        
+        ## 🚀 What's New
+        
+        This release provides comprehensive Visual Studio automation capabilities for Claude Code:
+        
+        ### 🔧 Core Features
+        - **17 MCP Tools** for complete Visual Studio automation
+        - **Debugging Control** - Start, stop, and manage debugging sessions
+        - **Build Automation** - Trigger builds and capture detailed results
+        - **Solution Management** - Open solutions and manage projects
+        
+        ### 🎨 UI & Visual Features  
+        - **XAML Designer Automation** - Capture and analyse XAML designers
+        - **Screenshot Capture** - High-quality Visual Studio window captures
+        - **Visual State Analysis** - Compare IDE states with diff generation
+        
+        ### 🛡️ Quality & Reliability
+        - **Production-Ready COM Interop** - Safe Visual Studio integration
+        - **Comprehensive Error Handling** - Detailed error context and recovery
+        - **Memory Management** - Proper COM object lifecycle management
+        
+        ## 📦 Installation
+        
+        Install as a .NET global tool:
+        
+        ``````bash
+        dotnet tool install --global VisualStudioMcp
+        ``````
+        
+        ## 🔧 Claude Code Configuration
+        
+        Add to your ``mcp_servers.json``:
+        
+        ``````json
+        {
+          "mcpServers": {
+            "visual-studio": {
+              "command": "vsmcp",
+              "args": [],
+              "env": {}
+            }
+          }
+        }
+        ``````
+        
+        ## 📚 Documentation
+        
+        - [Complete API Reference](https://github.com/automint/visual-studio-mcp-server/blob/main/docs/api/mcp-tools-reference.md)
+        - [Installation Guide](https://github.com/automint/visual-studio-mcp-server/blob/main/docs/operations/installation-guide.md)
+        - [Claude Code Integration](https://github.com/automint/visual-studio-mcp-server/blob/main/docs/user-guides/claude-code-integration.md)
+        
+        ## 🔧 System Requirements
+        
+        - Windows 10/11
+        - Visual Studio 2022 (17.8+)
+        - .NET 8 Runtime
+        - Claude Code
+        
+        ## 🐛 Bug Fixes & Improvements
+        
+        - Enhanced COM object lifecycle management
+        - Improved error handling and logging
+        - Optimized screenshot capture performance
+        - Enhanced XAML designer detection
+        
+        ---
+        
+        **Full Changelog**: https://github.com/automint/visual-studio-mcp-server/compare/v1.0.0...v$version
+        "@
+        
+        $releaseNotes | Out-File -FilePath "release-notes.md" -Encoding utf8
+        echo "notes-file=release-notes.md" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+    
+    - name: 🏷️ Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Visual Studio MCP Server ${{ needs.package.outputs.package-version }}
+        body_path: release-notes.md
+        draft: false
+        prerelease: ${{ contains(needs.package.outputs.package-version, '-') }}
+        files: |
+          artifacts/*.nupkg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =====================================
+  # Notification Job
+  # =====================================
+  notify:
+    name: 'Send Notifications'
+    runs-on: ubuntu-latest
+    needs: [build-and-test, code-quality, package, deploy-nuget, create-release]
+    if: always()
+    
+    steps:
+    - name: 📢 Determine notification status
+      id: status
+      run: |
+        if [[ "${{ needs.build-and-test.result }}" == "failure" ]] || \
+           [[ "${{ needs.code-quality.result }}" == "failure" ]] || \
+           [[ "${{ needs.package.result }}" == "failure" ]]; then
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "message=❌ CI/CD Pipeline Failed" >> $GITHUB_OUTPUT
+        elif [[ "${{ needs.deploy-nuget.result }}" == "success" ]]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=✅ Successfully deployed to NuGet" >> $GITHUB_OUTPUT
+        else
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "message=✅ Build and tests completed successfully" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: 💬 Post to Slack
+      if: env.SLACK_WEBHOOK_URL != ''
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ steps.status.outputs.status }}
+        channel: '#development'
+        username: 'GitHub Actions'
+        text: |
+          ${{ steps.status.outputs.message }}
+          
+          **Repository:** ${{ github.repository }}
+          **Branch:** ${{ github.ref_name }}
+          **Commit:** ${{ github.sha }}
+          **Workflow:** ${{ github.workflow }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    
+    - name: 📧 Send email notification
+      if: steps.status.outputs.status == 'failure'
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: 'CI/CD Pipeline Failure - Visual Studio MCP Server'
+        body: |
+          The CI/CD pipeline for Visual Studio MCP Server has failed.
+          
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.workflow }}
+          
+          Please check the GitHub Actions logs for details.
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+
+# =====================================
+# Workflow Summary
+# =====================================
+# This CI/CD pipeline provides:
+# 
+# ✅ Automated building and testing
+# ✅ Code quality analysis with SonarCloud and CodeQL
+# ✅ Global tool packaging with version management
+# ✅ Automated deployment to NuGet
+# ✅ GitHub release creation for tags
+# ✅ Comprehensive notifications
+# 
+# Triggers:
+# - Push to main/develop branches
+# - Pull requests to main/develop
+# - Git tags starting with 'v'
+# - Manual workflow dispatch
+# 
+# Environments:
+# - Development: All branches, no deployment
+# - Production: Main branch and tags, deploys to NuGet

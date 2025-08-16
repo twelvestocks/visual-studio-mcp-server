@@ -6,10 +6,37 @@ This document provides comprehensive documentation for all MCP tools provided by
 
 - [Visual Studio Management](#visual-studio-management) - Instance discovery and connection
 - [Build Automation](#build-automation) - Solution and project building
-- [Debug Control](#debug-control) - Debugging session management
+- [Debug Control](#debug-control) - Debugging session management and runtime inspection
 - [XAML Designer](#xaml-designer) - XAML designer automation
 - [Visual Capture](#visual-capture) - Screenshot and imaging tools
 - [Project Analysis](#project-analysis) - Code and project inspection
+
+## Complete Tool List
+
+**Core VS Management (5 tools):**
+- `vs_list_instances` - List running VS instances
+- `vs_connect_instance` - Connect to specific VS instance
+- `vs_open_solution` - Open solution files
+- `vs_build_solution` - Build solutions and projects
+- `vs_get_projects` - Get project information
+
+**Debug Automation (9 tools):**
+- `vs_start_debugging` - Start debug sessions
+- `vs_stop_debugging` - Stop debug sessions
+- `vs_get_debug_state` - Get current debug state
+- `vs_set_breakpoint` - Set breakpoints with conditions
+- `vs_get_breakpoints` - List all breakpoints
+- `vs_get_local_variables` - Inspect local variables
+- `vs_get_call_stack` - Examine call stack
+- `vs_step_debug` - Step through code (into/over/out)
+- `vs_evaluate_expression` - Evaluate expressions in debug context
+
+**Visual Capture (3 tools):**
+- `vs_capture_window` - Capture any VS window
+- `vs_capture_full_ide` - Capture complete IDE state
+- `vs_analyse_visual_state` - Analyse and compare visual states
+
+**Total: 17 comprehensive MCP tools for complete Visual Studio automation**
 
 ---
 
@@ -86,6 +113,87 @@ Connect to Visual Studio instance vs_instance_12345 so I can automate build and 
 - `INSTANCE_NOT_FOUND` - Specified instance ID not found
 - `CONNECTION_TIMEOUT` - Connection attempt timed out
 - `ACCESS_DENIED` - Insufficient permissions for COM interop
+
+---
+
+### `vs_open_solution`
+
+**Purpose:** Open a solution file in the connected Visual Studio instance
+
+**Parameters:**
+- `solution_path` (required): Full path to solution file (.sln)
+- `close_current` (optional): Close currently loaded solution first (default: false)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "solutionPath": "C:\\Projects\\MyApp\\MyApp.sln",
+    "solutionName": "MyApp",
+    "projectCount": 5,
+    "loadTime": "00:00:08",
+    "buildConfiguration": "Debug",
+    "startupProject": "MyApp.UI"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Open the MyApp solution and show me how many projects it contains
+```
+
+**Error Responses:**
+- `SOLUTION_NOT_FOUND` - Solution file not found at specified path
+- `SOLUTION_LOAD_FAILED` - Solution failed to load (corrupted, version issues)
+- `PATH_VALIDATION_FAILED` - Path failed security validation
+
+---
+
+### `vs_get_projects`
+
+**Purpose:** Get detailed information about all projects in the current solution
+
+**Parameters:**
+- `include_references` (optional): Include project and package references (default: true)
+- `include_files` (optional): Include source file counts (default: false)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "projects": [
+      {
+        "name": "MyApp.Core",
+        "path": "src\\MyApp.Core\\MyApp.Core.csproj",
+        "type": "Library",
+        "targetFramework": "net8.0",
+        "packageReferences": [
+          {
+            "name": "Microsoft.Extensions.DependencyInjection",
+            "version": "8.0.0"
+          }
+        ],
+        "projectReferences": [],
+        "sourceFileCount": 25
+      }
+    ],
+    "totalProjects": 5,
+    "startupProject": "MyApp.UI"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Show me all projects in the solution with their target frameworks and dependencies
+```
+
+**Error Responses:**
+- `NO_SOLUTION_LOADED` - No solution currently loaded
+- `PROJECT_ENUMERATION_FAILED` - Failed to enumerate projects
 
 ---
 
@@ -236,6 +344,43 @@ Stop the current debugging session and show me a summary of what happened during
 
 ---
 
+### `vs_get_breakpoints`
+
+**Purpose:** List all breakpoints currently set in the debugging session
+
+**Parameters:**
+- `include_disabled` (optional): Include disabled breakpoints (default: true)
+- `file_filter` (optional): Filter by specific file path
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "breakpoints": [
+      {
+        "id": "bp_12345",
+        "filePath": "C:\\Projects\\MyApp\\Services\\UserService.cs",
+        "lineNumber": 42,
+        "condition": "userId > 100",
+        "enabled": true,
+        "resolved": true,
+        "hitCount": 3
+      }
+    ],
+    "totalBreakpoints": 5,
+    "enabledBreakpoints": 4
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Show me all breakpoints currently set and their hit counts
+```
+
+---
+
 ### `vs_set_breakpoint`
 
 **Purpose:** Set a breakpoint at a specific file and line number
@@ -321,6 +466,149 @@ Set a breakpoint at line 42 in UserService.cs with condition "userId > 100" to d
 **Claude Code Example:**
 ```
 Show me the current debug state including call stack and local variables so I can understand what's happening at this breakpoint
+```
+
+---
+
+### `vs_get_local_variables`
+
+**Purpose:** Get local variables and their values at the current debugging location
+
+**Parameters:**
+- `include_private` (optional): Include private fields (default: false)
+- `max_depth` (optional): Maximum object expansion depth (default: 2)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "variables": [
+      {
+        "name": "userId",
+        "value": "12345",
+        "type": "int",
+        "scope": "local"
+      },
+      {
+        "name": "user",
+        "value": "{ Id=12345, Name=\"John Doe\" }",
+        "type": "User",
+        "scope": "local",
+        "hasChildren": true
+      }
+    ],
+    "totalVariables": 8,
+    "currentMethod": "ProcessUser",
+    "currentLine": 42
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Show me all local variables at this breakpoint with their current values
+```
+
+---
+
+### `vs_get_call_stack`
+
+**Purpose:** Get the current call stack during debugging
+
+**Parameters:**
+- `max_frames` (optional): Maximum number of stack frames to return (default: 20)
+- `include_parameters` (optional): Include method parameters (default: true)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "frames": [
+      {
+        "level": 0,
+        "methodName": "ProcessUser",
+        "fileName": "UserService.cs",
+        "lineNumber": 42,
+        "parameters": [
+          {
+            "name": "userId",
+            "value": "12345",
+            "type": "int"
+          }
+        ]
+      }
+    ],
+    "totalFrames": 5,
+    "currentFrame": 0
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Show me the call stack to understand how we got to this point in the code
+```
+
+---
+
+### `vs_step_debug`
+
+**Purpose:** Perform debugging step operations (step into, over, or out)
+
+**Parameters:**
+- `step_type` (required): "into", "over", or "out"
+- `step_count` (optional): Number of steps to perform (default: 1)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "stepType": "over",
+    "stepsPerformed": 1,
+    "newLocation": {
+      "fileName": "UserService.cs",
+      "lineNumber": 43,
+      "methodName": "ProcessUser"
+    },
+    "executionState": "break"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Step over the current line and show me where execution stops next
+```
+
+---
+
+### `vs_evaluate_expression`
+
+**Purpose:** Evaluate expressions in the current debugging context
+
+**Parameters:**
+- `expression` (required): Expression to evaluate
+- `timeout_ms` (optional): Evaluation timeout (default: 5000)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "expression": "user.Name",
+    "result": "John Doe",
+    "type": "string",
+    "evaluationTime": 45
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Evaluate the expression "user.Name" to see the current user's name
 ```
 
 ---
@@ -661,6 +949,89 @@ Show me binding usage statistics for MainWindow.xaml to understand data binding 
 **Claude Code Example:**
 ```
 Capture the entire Visual Studio window including all panels so I can see the current development environment layout
+```
+
+---
+
+### `vs_capture_full_ide`
+
+**Purpose:** Capture the complete Visual Studio IDE state including all visible panels and windows
+
+**Parameters:**
+- `include_metadata` (optional): Include comprehensive metadata about captured elements (default: true)
+- `annotation_level` (optional): "none", "basic", "detailed" (default: "basic")
+- `capture_quality` (optional): "standard" or "high" (default: "high")
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "image_path": "/temp/full_ide_20250814_143022.png",
+    "metadata": {
+      "ide_layout": "Standard",
+      "visible_panels": ["Solution Explorer", "Properties", "Error List", "Output"],
+      "active_document": "UserService.cs",
+      "capture_size": "1920x1080",
+      "window_count": 12,
+      "capture_timestamp": "2025-08-14T14:30:22Z"
+    },
+    "layout_analysis": {
+      "main_editor_region": {"x": 300, "y": 100, "width": 1200, "height": 800},
+      "solution_explorer": {"x": 0, "y": 100, "width": 300, "height": 600},
+      "properties_panel": {"x": 1520, "y": 100, "width": 400, "height": 400}
+    }
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Capture the complete IDE state so I can see the current development environment layout
+```
+
+---
+
+### `vs_analyse_visual_state`
+
+**Purpose:** Analyse and compare visual states of the IDE, with diff generation capabilities
+
+**Parameters:**
+- `compare_with` (optional): Path to previous capture for comparison
+- `analysis_type` (optional): "layout", "content", "both" (default: "both")
+- `highlight_changes` (optional): Generate diff highlighting (default: true)
+
+**Returns:**
+```json
+{
+  "success": true,
+  "data": {
+    "current_state": {
+      "active_document": "UserService.cs",
+      "visible_panels": ["Solution Explorer", "Properties", "Error List"],
+      "error_count": 0,
+      "warning_count": 2,
+      "build_status": "succeeded"
+    },
+    "comparison_result": {
+      "changes_detected": true,
+      "changed_elements": [
+        {
+          "element": "Error List",
+          "change_type": "content_changed",
+          "description": "Error count decreased from 3 to 0"
+        }
+      ],
+      "layout_changes": false
+    },
+    "diff_image_path": "/temp/visual_diff_20250814_143022.png"
+  }
+}
+```
+
+**Claude Code Example:**
+```
+Analyse the current IDE state and compare it with the previous capture to show what has changed
 ```
 
 ---
