@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 
 namespace VisualStudioMcp.Imaging.Tests.MockHelpers;
 
@@ -9,13 +10,15 @@ public static class ProcessMockProvider
 {
     /// <summary>
     /// Process IDs that will simulate process not found scenarios.
+    /// Generated using cryptographically secure random numbers to prevent predictable attacks.
     /// </summary>
-    public static readonly uint[] NonExistentProcessIds = { 99999, 88888, 77777 };
+    public static readonly uint[] NonExistentProcessIds;
 
     /// <summary>
     /// Process IDs that will simulate access denied scenarios.
+    /// Generated using cryptographically secure random numbers in the restricted range.
     /// </summary>
-    public static readonly uint[] AccessDeniedProcessIds = { 4, 8, 12 }; // System processes
+    public static readonly uint[] AccessDeniedProcessIds;
 
     /// <summary>
     /// Process IDs that represent valid Visual Studio processes.
@@ -34,6 +37,14 @@ public static class ProcessMockProvider
 
     static ProcessMockProvider()
     {
+        // Generate cryptographically secure random process IDs
+        NonExistentProcessIds = GenerateSecureRandomProcessIds(3, minValue: 100000, maxValue: 999999);
+        
+        // Generate secure random IDs in the system process range (avoiding actual system processes)
+        AccessDeniedProcessIds = GenerateSecureRandomProcessIds(3, minValue: 1000, maxValue: 9999)
+            .Where(pid => !IsActualSystemProcess(pid))
+            .ToArray();
+
         // Get actual running processes that match VS patterns for realistic testing
         var currentProcesses = Process.GetProcesses()
             .Where(p => ValidVSProcessNames.Any(vsName => 
@@ -44,6 +55,45 @@ public static class ProcessMockProvider
         ValidVSProcessIds = currentProcesses.Length > 0 
             ? currentProcesses 
             : new uint[] { (uint)Process.GetCurrentProcess().Id }; // Fallback to current process
+    }
+
+    /// <summary>
+    /// Generates cryptographically secure random process IDs within the specified range.
+    /// </summary>
+    private static uint[] GenerateSecureRandomProcessIds(int count, uint minValue, uint maxValue)
+    {
+        using var rng = RandomNumberGenerator.Create();
+        var processIds = new uint[count];
+        var range = maxValue - minValue;
+        
+        for (int i = 0; i < count; i++)
+        {
+            var randomBytes = new byte[4];
+            rng.GetBytes(randomBytes);
+            var randomValue = BitConverter.ToUInt32(randomBytes, 0);
+            processIds[i] = (randomValue % range) + minValue;
+        }
+        
+        return processIds;
+    }
+
+    /// <summary>
+    /// Checks if a process ID corresponds to an actual system process that should not be used in testing.
+    /// </summary>
+    private static bool IsActualSystemProcess(uint processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById((int)processId);
+            // Check if it's a critical system process
+            var criticalProcessNames = new[] { "System", "smss", "csrss", "winlogon", "services", "lsass" };
+            return criticalProcessNames.Contains(process.ProcessName, StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Process doesn't exist, safe to use
+            return false;
+        }
     }
 
     /// <summary>

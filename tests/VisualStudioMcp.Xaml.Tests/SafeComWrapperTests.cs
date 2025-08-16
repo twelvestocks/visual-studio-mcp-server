@@ -18,7 +18,7 @@ public class SafeComWrapperTests
 
     // Test interface for COM object simulation
     [ComVisible(true)]
-    [Guid("12345678-1234-1234-1234-123456789012")]
+    [Guid("57d545f8-98a9-44ac-99ba-571f8b4babeb")]
     public interface ITestComObject
     {
         string GetValue();

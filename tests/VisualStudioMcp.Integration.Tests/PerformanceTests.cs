@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using VisualStudioMcp.Core;
+using VisualStudioMcp.Integration.Tests.TestUtilities;
 
 namespace VisualStudioMcp.Integration.Tests;
 
 [TestClass]
+[TestCategory(TestCategories.Performance)]
+[TestCategory(TestCategories.Integration)]
 public class PerformanceTests
 {
     private TestLogger<VisualStudioService> _testLogger = null!;
@@ -24,11 +27,12 @@ public class PerformanceTests
     }
 
     [TestMethod]
-    public async Task GetRunningInstancesAsync_Performance_CompletesWithin5Seconds()
+    [TestCategory(TestCategories.Performance)]
+    public async Task GetRunningInstancesAsync_Performance_CompletesWithin1Second()
     {
         // Arrange
         var stopwatch = Stopwatch.StartNew();
-        const int maxAllowedMs = 5000;
+        const int maxAllowedMs = 1000; // Reduced from 5000ms to 1000ms for production realism
 
         // Act
         await _visualStudioService.GetRunningInstancesAsync();
@@ -41,11 +45,11 @@ public class PerformanceTests
     }
 
     [TestMethod]
-    public async Task IsConnectionHealthyAsync_Performance_CompletesWithin2Seconds()
+    public async Task IsConnectionHealthyAsync_Performance_CompletesWithin500ms()
     {
         // Arrange
         var stopwatch = Stopwatch.StartNew();
-        const int maxAllowedMs = 2000;
+        const int maxAllowedMs = 500; // Reduced from 2000ms to 500ms - health checks should be sub-second
         const int testProcessId = 99999; // Non-existent process
 
         // Act
@@ -99,8 +103,8 @@ public class PerformanceTests
     public async Task ConcurrentOperations_Performance_HandlesMultipleRequestsEfficiently()
     {
         // Arrange
-        const int concurrentRequests = 10;
-        const int maxAllowedMs = 10000; // 10 seconds for all operations
+        const int concurrentRequests = 50; // Increased from 10 to 50 for realistic load testing
+        const int maxAllowedMs = 5000; // Reduced from 10000ms to 5000ms for better performance requirements
         var stopwatch = Stopwatch.StartNew();
 
         // Act
@@ -145,7 +149,7 @@ public class PerformanceTests
 
         // Assert - Memory shouldn't grow excessively
         var memoryGrowthMB = finalMemory.WorkingSetMB - initialMemory.WorkingSetMB;
-        const long maxAllowedGrowthMB = 100; // 100MB max growth
+        const long maxAllowedGrowthMB = 20; // Reduced from 100MB to 20MB for COM operations
 
         Assert.IsTrue(memoryGrowthMB < maxAllowedGrowthMB, 
             $"Memory grew by {memoryGrowthMB}MB, exceeding {maxAllowedGrowthMB}MB limit");

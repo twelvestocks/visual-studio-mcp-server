@@ -3,10 +3,13 @@ using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using VisualStudioMcp.Core;
+using VisualStudioMcp.Core.Tests.TestUtilities;
 
 namespace VisualStudioMcp.Core.Tests;
 
 [TestClass]
+[TestCategory(TestCategories.Unit)]
+[TestCategory(TestCategories.ComInterop)]
 public class ComInteropHelperTests
 {
     private Mock<ILogger> _mockLogger = null!;
@@ -18,6 +21,7 @@ public class ComInteropHelperTests
     }
 
     [TestMethod]
+    [TestCategory(TestCategories.Unit)]
     public void SafeComOperation_WithSuccessfulOperation_ReturnsResult()
     {
         // Arrange

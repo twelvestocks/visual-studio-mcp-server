@@ -35,11 +35,8 @@ public class SecurityValidationTests
         // Act & Assert - This should not throw an exception
         try
         {
-            // Access the private method using reflection for testing
-            var method = typeof(WindowClassificationService)
-                .GetMethod("IsVisualStudioWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            var result = (bool)method!.Invoke(_service, new object[] { window });
+            // Call the internal method directly (now accessible via InternalsVisibleTo)
+            var result = _service.IsVisualStudioWindow(window);
 
             // Verify graceful failure
             Assert.IsFalse(result, "Should return false for non-existent process");
@@ -72,10 +69,8 @@ public class SecurityValidationTests
         // Act & Assert
         try
         {
-            var method = typeof(WindowClassificationService)
-                .GetMethod("IsVisualStudioWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            var result = (bool)method!.Invoke(_service, new object[] { window });
+            // Call the internal method directly (now accessible via InternalsVisibleTo)
+            var result = _service.IsVisualStudioWindow(window);
 
             // Verify graceful failure
             Assert.IsFalse(result, "Should return false for non-existent process");
@@ -110,10 +105,8 @@ public class SecurityValidationTests
         // Act
         try
         {
-            var method = typeof(WindowClassificationService)
-                .GetMethod("IsVisualStudioWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            
-            var result = (bool)method!.Invoke(_service, new object[] { window });
+            // Call the internal method directly (now accessible via InternalsVisibleTo)
+            var result = _service.IsVisualStudioWindow(window);
 
             // Assert
             // Note: This might be true or false depending on the actual process name,
@@ -153,10 +146,8 @@ public class SecurityValidationTests
         {
             try
             {
-                var method = typeof(WindowClassificationService)
-                    .GetMethod("IsVisualStudioWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                
-                method!.Invoke(_service, new object[] { window });
+                // Call the internal method directly (now accessible via InternalsVisibleTo)
+                _service.IsVisualStudioWindow(window);
             }
             catch
             {

@@ -880,7 +880,7 @@ public class WindowClassificationService : IWindowClassificationService
     /// }
     /// </code>
     /// </example>
-    private bool IsVisualStudioWindow(VisualStudioWindow window)
+    internal bool IsVisualStudioWindow(VisualStudioWindow window)
     {
         try
         {
