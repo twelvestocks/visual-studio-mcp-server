@@ -14,6 +14,7 @@ public class VisualStudioMcpServer
     private readonly IXamlDesignerService _xamlService;
     private readonly IDebugService _debugService;
     private readonly IImagingService _imagingService;
+    private readonly IWindowClassificationService _windowClassification;
     private readonly ILogger<VisualStudioMcpServer> _logger;
 
     private readonly Dictionary<string, Func<JsonElement, Task<object>>> _tools = new();
@@ -23,12 +24,14 @@ public class VisualStudioMcpServer
         IXamlDesignerService xamlService,
         IDebugService debugService,
         IImagingService imagingService,
+        IWindowClassificationService windowClassification,
         ILogger<VisualStudioMcpServer> logger)
     {
         _vsService = vsService;
         _xamlService = xamlService;
         _debugService = debugService;
         _imagingService = imagingService;
+        _windowClassification = windowClassification;
         _logger = logger;
 
         // Register MCP tools
@@ -123,7 +126,10 @@ public class VisualStudioMcpServer
                             new { name = "vs_get_local_variables", description = "Get local variables in the current debugging context" },
                             new { name = "vs_get_call_stack", description = "Get the current call stack" },
                             new { name = "vs_step_debug", description = "Step through code execution (into, over, out)" },
-                            new { name = "vs_evaluate_expression", description = "Evaluate an expression in the current debugging context" }
+                            new { name = "vs_evaluate_expression", description = "Evaluate an expression in the current debugging context" },
+                            new { name = "vs_capture_window", description = "Capture a specific Visual Studio window with intelligent annotation" },
+                            new { name = "vs_capture_full_ide", description = "Capture the complete Visual Studio IDE with comprehensive layout" },
+                            new { name = "vs_analyse_visual_state", description = "Analyse and compare Visual Studio visual states" }
                         }
                     }
                 };
@@ -170,6 +176,11 @@ public class VisualStudioMcpServer
         _tools["vs_get_call_stack"] = HandleGetCallStackAsync;
         _tools["vs_step_debug"] = HandleStepDebugAsync;
         _tools["vs_evaluate_expression"] = HandleEvaluateExpressionAsync;
+        
+        // Visual capture tools
+        _tools["vs_capture_window"] = HandleCaptureWindowAsync;
+        _tools["vs_capture_full_ide"] = HandleCaptureFullIdeAsync;
+        _tools["vs_analyse_visual_state"] = HandleAnalyseVisualStateAsync;
 
         _logger.LogInformation("Registered {Count} MCP tools", _tools.Count);
     }
@@ -686,6 +697,374 @@ public class VisualStudioMcpServer
                 "DEBUG_EVALUATE_FAILED",
                 ex.Message);
         }
+    }
+
+    #endregion
+
+    #region Visual Capture Tool Handlers
+
+    private async Task<object> HandleCaptureWindowAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_capture_window tool");
+
+            // Get window type parameter
+            VisualStudioWindowType windowType = VisualStudioWindowType.Unknown;
+            if (arguments.TryGetProperty("windowType", out var windowTypeElement))
+            {
+                if (Enum.TryParse<VisualStudioWindowType>(windowTypeElement.GetString(), ignoreCase: true, out var parsedType))
+                {
+                    windowType = parsedType;
+                }
+            }
+
+            // Get optional window handle
+            IntPtr? windowHandle = null;
+            if (arguments.TryGetProperty("windowHandle", out var handleElement) && 
+                handleElement.TryGetInt64(out var handleValue))
+            {
+                windowHandle = new IntPtr(handleValue);
+            }
+
+            // Get optional save path
+            string? savePath = null;
+            if (arguments.TryGetProperty("savePath", out var pathElement))
+            {
+                savePath = pathElement.GetString();
+            }
+
+            SpecializedCapture capture;
+
+            // If specific window handle provided, use it
+            if (windowHandle.HasValue && windowHandle.Value != IntPtr.Zero)
+            {
+                capture = await _imagingService.CaptureWindowWithAnnotationAsync(windowHandle.Value, windowType);
+            }
+            else
+            {
+                // Capture based on window type
+                capture = windowType switch
+                {
+                    VisualStudioWindowType.SolutionExplorer => await _imagingService.CaptureSolutionExplorerAsync(),
+                    VisualStudioWindowType.PropertiesWindow => await _imagingService.CapturePropertiesWindowAsync(),
+                    VisualStudioWindowType.ErrorList => await _imagingService.CaptureErrorListAndOutputAsync(),
+                    VisualStudioWindowType.CodeEditor => await _imagingService.CaptureCodeEditorAsync(),
+                    _ => await CaptureGenericWindowTypeAsync(windowType)
+                };
+            }
+
+            // Save to file if path provided
+            if (!string.IsNullOrEmpty(savePath) && capture.ImageData.Length > 0)
+            {
+                await _imagingService.SaveCaptureAsync(capture, savePath);
+            }
+
+            return McpToolResult.CreateSuccess(new
+            {
+                capture = new
+                {
+                    windowType = capture.WindowType.ToString(),
+                    width = capture.Width,
+                    height = capture.Height,
+                    annotationCount = capture.Annotations.Count,
+                    hasImageData = capture.ImageData.Length > 0,
+                    captureTime = capture.CaptureTime,
+                    extractedText = capture.ExtractedText,
+                    uiElementCount = capture.UiElements.Count,
+                    metadata = capture.WindowMetadata
+                },
+                savedToFile = !string.IsNullOrEmpty(savePath),
+                savePath = savePath,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_capture_window tool");
+            return McpToolResult.CreateError(
+                "Failed to capture window",
+                "VISUAL_CAPTURE_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleCaptureFullIdeAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_capture_full_ide tool");
+
+            // Get optional save path for composite image
+            string? savePath = null;
+            if (arguments.TryGetProperty("savePath", out var pathElement))
+            {
+                savePath = pathElement.GetString();
+            }
+
+            // Get optional flag to save individual windows
+            bool saveIndividualWindows = false;
+            if (arguments.TryGetProperty("saveIndividualWindows", out var saveIndividualElement))
+            {
+                saveIndividualWindows = saveIndividualElement.GetBoolean();
+            }
+
+            // Capture full IDE with layout
+            var fullCapture = await _imagingService.CaptureFullIdeWithLayoutAsync();
+
+            // Save composite image if path provided
+            if (!string.IsNullOrEmpty(savePath) && fullCapture.CompositeImage.ImageData.Length > 0)
+            {
+                await _imagingService.SaveCaptureAsync(fullCapture.CompositeImage, savePath);
+            }
+
+            // Save individual windows if requested
+            var individualSavePaths = new List<string>();
+            if (saveIndividualWindows && !string.IsNullOrEmpty(savePath))
+            {
+                var basePath = Path.GetFileNameWithoutExtension(savePath);
+                var extension = Path.GetExtension(savePath);
+                var directory = Path.GetDirectoryName(savePath) ?? "";
+
+                for (int i = 0; i < fullCapture.WindowCaptures.Count; i++)
+                {
+                    var windowCapture = fullCapture.WindowCaptures[i];
+                    var individualPath = Path.Combine(directory, $"{basePath}_{windowCapture.WindowType}_{i}{extension}");
+                    
+                    if (windowCapture.ImageData.Length > 0)
+                    {
+                        await _imagingService.SaveCaptureAsync(windowCapture, individualPath);
+                        individualSavePaths.Add(individualPath);
+                    }
+                }
+            }
+
+            return McpToolResult.CreateSuccess(new
+            {
+                fullCapture = new
+                {
+                    compositeImage = new
+                    {
+                        width = fullCapture.CompositeImage.Width,
+                        height = fullCapture.CompositeImage.Height,
+                        hasImageData = fullCapture.CompositeImage.ImageData.Length > 0
+                    },
+                    windowCaptures = fullCapture.WindowCaptures.Select(wc => new
+                    {
+                        windowType = wc.WindowType.ToString(),
+                        width = wc.Width,
+                        height = wc.Height,
+                        annotationCount = wc.Annotations.Count,
+                        hasImageData = wc.ImageData.Length > 0
+                    }).ToArray(),
+                    layout = new
+                    {
+                        windowCount = fullCapture.Layout.AllWindows.Count,
+                        windowTypes = fullCapture.Layout.WindowsByType.Keys.Select(k => k.ToString()).ToArray(),
+                        activeWindow = fullCapture.Layout.ActiveWindow?.WindowType.ToString(),
+                        analysisTime = fullCapture.Layout.AnalysisTime
+                    },
+                    captureTime = fullCapture.CaptureTime,
+                    ideMetadata = fullCapture.IdeMetadata
+                },
+                savedToFile = !string.IsNullOrEmpty(savePath),
+                savePath = savePath,
+                individualSavePaths = individualSavePaths,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_capture_full_ide tool");
+            return McpToolResult.CreateError(
+                "Failed to capture full IDE",
+                "FULL_IDE_CAPTURE_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<object> HandleAnalyseVisualStateAsync(JsonElement arguments)
+    {
+        try
+        {
+            _logger.LogDebug("Executing vs_analyse_visual_state tool");
+
+            // Get the current layout analysis
+            var currentLayout = await _windowClassification.AnalyzeLayoutAsync();
+
+            // Optional: compare with previous state if provided
+            WindowLayout? previousLayout = null;
+            if (arguments.TryGetProperty("previousStateFile", out var previousFileElement))
+            {
+                var previousFile = previousFileElement.GetString();
+                if (!string.IsNullOrEmpty(previousFile) && File.Exists(previousFile))
+                {
+                    try
+                    {
+                        var jsonContent = await File.ReadAllTextAsync(previousFile);
+                        previousLayout = JsonSerializer.Deserialize<WindowLayout>(jsonContent);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to load previous layout from file: {File}", previousFile);
+                    }
+                }
+            }
+
+            // Generate visual state analysis
+            var analysis = GenerateVisualStateAnalysis(currentLayout, previousLayout);
+
+            // Save current state if requested
+            string? saveCurrentStatePath = null;
+            if (arguments.TryGetProperty("saveCurrentState", out var saveStateElement))
+            {
+                saveCurrentStatePath = saveStateElement.GetString();
+            }
+
+            if (!string.IsNullOrEmpty(saveCurrentStatePath))
+            {
+                var currentStateJson = JsonSerializer.Serialize(currentLayout, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    WriteIndented = true
+                });
+                await File.WriteAllTextAsync(saveCurrentStatePath, currentStateJson);
+            }
+
+            return McpToolResult.CreateSuccess(new
+            {
+                analysis = analysis,
+                currentLayout = new
+                {
+                    windowCount = currentLayout.AllWindows.Count,
+                    windowTypes = currentLayout.WindowsByType.Keys.Select(k => k.ToString()).ToArray(),
+                    activeWindow = currentLayout.ActiveWindow?.WindowType.ToString(),
+                    mainWindow = currentLayout.MainWindow != null ? new
+                    {
+                        title = currentLayout.MainWindow.Title,
+                        bounds = currentLayout.MainWindow.Bounds
+                    } : null,
+                    dockingLayout = new
+                    {
+                        leftPanelCount = currentLayout.DockingLayout.LeftDockedPanels.Count,
+                        rightPanelCount = currentLayout.DockingLayout.RightDockedPanels.Count,
+                        topPanelCount = currentLayout.DockingLayout.TopDockedPanels.Count,
+                        bottomPanelCount = currentLayout.DockingLayout.BottomDockedPanels.Count,
+                        floatingPanelCount = currentLayout.DockingLayout.FloatingPanels.Count
+                    },
+                    analysisTime = currentLayout.AnalysisTime
+                },
+                savedCurrentState = !string.IsNullOrEmpty(saveCurrentStatePath),
+                saveCurrentStatePath = saveCurrentStatePath,
+                timestamp = DateTime.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in vs_analyse_visual_state tool");
+            return McpToolResult.CreateError(
+                "Failed to analyse visual state",
+                "VISUAL_STATE_ANALYSIS_FAILED",
+                ex.Message);
+        }
+    }
+
+    private async Task<SpecializedCapture> CaptureGenericWindowTypeAsync(VisualStudioWindowType windowType)
+    {
+        // Find windows of the specified type and capture the first one
+        var windows = await _windowClassification.FindWindowsByTypeAsync(windowType);
+        var targetWindow = windows.FirstOrDefault();
+
+        if (targetWindow != null)
+        {
+            return await _imagingService.CaptureWindowWithAnnotationAsync(targetWindow.Handle, windowType);
+        }
+
+        return new SpecializedCapture
+        {
+            ImageData = Array.Empty<byte>(),
+            ImageFormat = "PNG",
+            Width = 0,
+            Height = 0,
+            CaptureTime = DateTime.UtcNow,
+            WindowType = windowType
+        };
+    }
+
+    private object GenerateVisualStateAnalysis(WindowLayout currentLayout, WindowLayout? previousLayout)
+    {
+        var analysis = new
+        {
+            summary = new
+            {
+                totalWindows = currentLayout.AllWindows.Count,
+                visibleWindowTypes = currentLayout.WindowsByType.Keys.Count,
+                activeWindowType = currentLayout.ActiveWindow?.WindowType.ToString() ?? "None",
+                layoutComplexity = CalculateLayoutComplexity(currentLayout)
+            },
+            windowDistribution = currentLayout.WindowsByType.ToDictionary(
+                kvp => kvp.Key.ToString(),
+                kvp => kvp.Value.Count
+            ),
+            dockingAnalysis = new
+            {
+                totalDockedPanels = currentLayout.DockingLayout.LeftDockedPanels.Count +
+                                  currentLayout.DockingLayout.RightDockedPanels.Count +
+                                  currentLayout.DockingLayout.TopDockedPanels.Count +
+                                  currentLayout.DockingLayout.BottomDockedPanels.Count,
+                floatingPanels = currentLayout.DockingLayout.FloatingPanels.Count,
+                dockingSides = new
+                {
+                    left = currentLayout.DockingLayout.LeftDockedPanels.Select(p => p.WindowType.ToString()).ToArray(),
+                    right = currentLayout.DockingLayout.RightDockedPanels.Select(p => p.WindowType.ToString()).ToArray(),
+                    top = currentLayout.DockingLayout.TopDockedPanels.Select(p => p.WindowType.ToString()).ToArray(),
+                    bottom = currentLayout.DockingLayout.BottomDockedPanels.Select(p => p.WindowType.ToString()).ToArray()
+                }
+            },
+            comparison = previousLayout != null ? GenerateLayoutComparison(currentLayout, previousLayout) : null
+        };
+
+        return analysis;
+    }
+
+    private int CalculateLayoutComplexity(WindowLayout layout)
+    {
+        // Simple complexity calculation based on window count and types
+        var baseComplexity = layout.AllWindows.Count;
+        var typeVariety = layout.WindowsByType.Keys.Count;
+        var dockingComplexity = layout.DockingLayout.LeftDockedPanels.Count +
+                               layout.DockingLayout.RightDockedPanels.Count +
+                               layout.DockingLayout.TopDockedPanels.Count +
+                               layout.DockingLayout.BottomDockedPanels.Count;
+
+        return baseComplexity + (typeVariety * 2) + dockingComplexity;
+    }
+
+    private object GenerateLayoutComparison(WindowLayout current, WindowLayout previous)
+    {
+        var currentTypes = current.WindowsByType.Keys.ToHashSet();
+        var previousTypes = previous.WindowsByType.Keys.ToHashSet();
+
+        return new
+        {
+            windowCountChange = current.AllWindows.Count - previous.AllWindows.Count,
+            newWindowTypes = currentTypes.Except(previousTypes).Select(t => t.ToString()).ToArray(),
+            removedWindowTypes = previousTypes.Except(currentTypes).Select(t => t.ToString()).ToArray(),
+            activeWindowChanged = current.ActiveWindow?.WindowType != previous.ActiveWindow?.WindowType,
+            layoutStabilityScore = CalculateLayoutStability(current, previous)
+        };
+    }
+
+    private double CalculateLayoutStability(WindowLayout current, WindowLayout previous)
+    {
+        // Simple stability calculation (0.0 = completely different, 1.0 = identical)
+        var currentTypes = current.WindowsByType.Keys.ToHashSet();
+        var previousTypes = previous.WindowsByType.Keys.ToHashSet();
+        
+        var intersection = currentTypes.Intersect(previousTypes).Count();
+        var union = currentTypes.Union(previousTypes).Count();
+        
+        return union > 0 ? (double)intersection / union : 0.0;
     }
 
     #endregion

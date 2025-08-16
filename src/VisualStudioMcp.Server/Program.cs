@@ -36,4 +36,5 @@ static void ConfigureServices(IServiceCollection services)
     services.AddSingleton<IXamlDesignerService, XamlDesignerService>();
     services.AddSingleton<IDebugService, DebugService>();
     services.AddSingleton<IImagingService, ImagingService>();
+    services.AddSingleton<IWindowClassificationService, WindowClassificationService>();
 }
